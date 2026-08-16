@@ -1,0 +1,22 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Local secrets
+.env
+.env.*
+!.env.example
+node_modules
+
+# 暂不纳入版本控制（用户确认排除）
+test/
+package.json
+package-lock.json
+.npmrc
