@@ -3,7 +3,9 @@
 import asyncio
 from datetime import datetime
 
-from agent_core.loop import run_loop
+import pytest
+
+from agent_core.loop import _execute_tool_with_progress, run_loop
 from agent_core.types import AgentTool, ToolExecutionResult
 from ai.types import (
     AssistantMessage,
@@ -33,7 +35,7 @@ class ReadTool(AgentTool):
     description = ""
     parameters = {}
 
-    async def execute(self, call, cancel) -> ToolExecutionResult:
+    async def execute(self, call, cancel, on_progress=None) -> ToolExecutionResult:
         return ToolExecutionResult(content="文件内容")
 
 
@@ -155,3 +157,100 @@ def test_unknown_tool_returns_error_result() -> None:
     )
     result, _ = asyncio.run(_run(provider, tools=[]))
     assert result == "继续"
+
+
+class ProgressTool(AgentTool):
+    name = "progress"
+    description = ""
+    parameters = {}
+
+    async def execute(self, call, cancel, on_progress=None) -> ToolExecutionResult:
+        if on_progress:
+            on_progress("第一行")
+            on_progress("第二行")
+        return ToolExecutionResult(content="done")
+
+
+def test_tool_progress_events_emitted_in_order() -> None:
+    provider = FakeProvider(
+        [
+            _msg([_tool_call("progress")], "toolUse"),
+            _msg([TextContent(text="完成")]),
+        ]
+    )
+    emit = NoopEmit()
+
+    async def run() -> None:
+        await run_loop(
+            provider=provider,
+            model=MODEL,
+            system_prompt=None,
+            user_prompt="hi",
+            emit=emit,
+            tools=[ProgressTool()],
+            max_turns=20,
+            history=(),
+        )
+
+    asyncio.run(run())
+    assert emit.events.count("ToolUpdated") == 2
+    # 进度事件在 ToolCompleted 之前按序发出
+    assert emit.events.index("ToolUpdated") < emit.events.index("ToolCompleted")
+
+
+def test_tool_progress_events_gathered_when_tool_raises() -> None:
+    class ExplodingTool(AgentTool):
+        name = "boom"
+        description = ""
+        parameters = {}
+
+        async def execute(self, call, cancel, on_progress=None) -> ToolExecutionResult:
+            if on_progress:
+                on_progress("before raise")
+            raise RuntimeError("boom")
+
+    events: list[object] = []
+
+    async def emit(event) -> None:
+        events.append(event)
+
+    async def run() -> None:
+        with pytest.raises(RuntimeError, match="boom"):
+            await _execute_tool_with_progress(
+                ExplodingTool(),
+                _tool_call("boom"),
+                asyncio.Event(),
+                emit,
+            )
+
+    asyncio.run(run())
+    assert any(type(e).__name__ == "ToolUpdated" for e in events)
+
+
+def test_tool_progress_events_gathered_when_tool_cancelled() -> None:
+    class CancelledTool(AgentTool):
+        name = "cancel"
+        description = ""
+        parameters = {}
+
+        async def execute(self, call, cancel, on_progress=None) -> ToolExecutionResult:
+            if on_progress:
+                on_progress("before cancel")
+            raise asyncio.CancelledError()
+
+    events: list[object] = []
+
+    async def emit(event) -> None:
+        events.append(event)
+
+    async def run() -> None:
+        with pytest.raises(asyncio.CancelledError):
+            await _execute_tool_with_progress(
+                CancelledTool(),
+                _tool_call("cancel"),
+                asyncio.Event(),
+                emit,
+            )
+
+    asyncio.run(run())
+    assert any(type(e).__name__ == "ToolUpdated" for e in events)

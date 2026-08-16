@@ -19,6 +19,7 @@ from agent_core.events import (
     ThinkingDeltaEvent,
     ToolCompleted,
     ToolStarted,
+    ToolUpdated,
     TurnEnded,
     TurnStarted,
 )
@@ -118,7 +119,7 @@ async def run_loop(
                 if tool is None:
                     exec_result = ToolExecutionResult(content=f"未知工具:{call.name}", is_error=True)
                 else:
-                    exec_result = await tool.execute(call, cancel or asyncio.Event())
+                    exec_result = await _execute_tool_with_progress(tool, call, cancel or asyncio.Event(), emit)
                 # 结果转成 ToolResult 消息（ai.types 里已有，role="toolResult"）
                 result_msg = ToolResult(
                     toolCallId=call.id,
@@ -139,3 +140,38 @@ async def run_loop(
         raise
     await emit(AgentEnded("max_turns"))
     return f"达到max turn轮数: {max_turns} 轮"
+
+
+async def _execute_tool_with_progress(
+    tool: AgentTool,
+    call: ToolCallContent,
+    cancel: asyncio.Event,
+    emit: EventSink,
+) -> ToolExecutionResult:
+    """执行单个工具并转发进度事件。
+
+    对应 pi 的 executePreparedToolCall（agent-loop.ts）：进度回调不逐个 await，
+    先收集成 Task 列表，工具结束后一次性批量等待（acceptingUpdates 闸门）。
+    """
+
+    accepting_updates = True
+    update_tasks: list[asyncio.Task] = []
+
+    def on_progress(line: str) -> None:
+        nonlocal accepting_updates
+        if accepting_updates:
+
+            async def _emit_update(_line: str = line) -> None:
+                await emit(ToolUpdated(call=call, partial=_line))
+
+            update_tasks.append(asyncio.create_task(_emit_update()))
+
+    try:
+        exec_result = await tool.execute(call, cancel, on_progress=on_progress)
+    finally:
+        # 无论工具成功/失败/被取消，都关闭进度闸门并等待已排队的更新事件，
+        # 避免 asyncio.Task 泄漏或事件顺序错乱。
+        accepting_updates = False
+        if update_tasks:
+            await asyncio.gather(*update_tasks)
+    return exec_result

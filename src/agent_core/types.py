@@ -1,7 +1,7 @@
 import asyncio
-from typing import Protocol
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from ai.types import Message, ToolCallContent
 
@@ -13,6 +13,10 @@ class ToolExecutionResult:
     content: str
     details: dict[str, Any] = field(default_factory=dict)
     is_error: bool = False
+
+
+# 进度回调
+ProgressSink = Callable[[str], None]  # 收到一行文本，返回None
 
 
 class AgentTool(Protocol):
@@ -28,5 +32,8 @@ class AgentTool(Protocol):
     parameters: dict[str, Any]
 
     async def execute(
-        self, call: ToolCallContent, cancel: asyncio.Event
+        self,
+        call: ToolCallContent,
+        cancel: asyncio.Event,
+        on_progress: ProgressSink | None = None,
     ) -> ToolExecutionResult: ...

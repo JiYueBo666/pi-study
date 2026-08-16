@@ -16,6 +16,12 @@ async def _exec(tool, **args):
     return await tool.execute(_call(tool.name, **args), asyncio.Event())
 
 
+async def _exec_with_progress(tool, **args):
+    lines: list[str] = []
+    result = await tool.execute(_call(tool.name, **args), asyncio.Event(), on_progress=lines.append)
+    return result, lines
+
+
 def _tools(tmp_path: Path) -> dict:
     return {t.name: t for t in build_tools(Workspace(root=tmp_path))}
 
@@ -94,6 +100,20 @@ def test_bash_timeout_kills_process(tmp_path: Path) -> None:
     r = asyncio.run(_exec(tools["bash"], command="sleep 5", timeout=1))
     assert r.details.get("timed_out")
     assert "timed out" in r.content
+
+
+def test_bash_progress_streams_stdout_lines(tmp_path: Path) -> None:
+    tools = _tools(tmp_path)
+    r, lines = asyncio.run(_exec_with_progress(tools["bash"], command="printf 'a\\nb\\nc\\n'"))
+    assert not r.is_error
+    assert lines == ["a", "b", "c"]
+
+
+def test_bash_timeout_keeps_received_progress(tmp_path: Path) -> None:
+    tools = _tools(tmp_path)
+    r, lines = asyncio.run(_exec_with_progress(tools["bash"], command="printf 'start\\n'; sleep 5", timeout=1))
+    assert r.details.get("timed_out")
+    assert "start" in lines
 
 
 def test_missing_parameter_is_error(tmp_path: Path) -> None:

@@ -57,8 +57,10 @@ stream_failed(error)
 `agent_core` 定义 `AgentTool` 协议。实现必须提供：
 
 ```text
-名称、说明、JSON Schema 参数、execute(call, cancellation)
+名称、说明、JSON Schema 参数、execute(call, cancellation, on_progress?)
 ```
+
+`on_progress` 是可选进度回调：工具在长时间执行中可把人类可读的局部输出（例如 bash 的逐行 stdout）传给它，用于 UI 实时展示。它是纯展示通道，不是消息历史的一部分；实现可以忽略它，工具结果仍以 `ToolExecutionResult` 为准。
 
 工具结果具有两个通道：
 
@@ -97,6 +99,8 @@ tool_started / tool_updated / tool_completed
 ```
 
 不变量：消费者可以渲染或记录事件，但不能用事件修改 Agent 状态。这样 CLI 行为不会反过来变成 Loop 行为。
+
+`tool_updated` 是工具执行期间的进度事件：携带局部文本（如 bash 输出的一行），只用于展示，不进入消息历史，也不替代最终的 `tool_completed`。
 
 ## 3. `coding_agent`：Coding 产品通信
 

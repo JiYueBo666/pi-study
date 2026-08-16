@@ -39,7 +39,7 @@ class ReadTool(AgentTool):
     description = ""
     parameters = {}
 
-    async def execute(self, call, cancel) -> ToolExecutionResult:
+    async def execute(self, call, cancel, on_progress=None) -> ToolExecutionResult:
         return ToolExecutionResult(content="文件内容")
 
 

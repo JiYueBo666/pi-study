@@ -12,6 +12,7 @@ from agent_core.events import (
     ThinkingDeltaEvent,
     ToolCompleted,
     ToolStarted,
+    ToolUpdated,
     TurnStarted,
 )
 
@@ -60,6 +61,8 @@ class TerminalRenderer:
             self._on_turn(event)
         elif isinstance(event, AgentEnded):
             self._on_ended(event)
+        elif isinstance(event, ToolUpdated):
+            self._on_tool_updated(event)
         # 其余事件：v0 不渲染
 
     def _print(self, text: str = "", *, end: str = "\n") -> None:
@@ -113,6 +116,9 @@ class TerminalRenderer:
         self._break_stream()
         label, code = _ENDED_LABELS.get(event.status, (event.status, DIM))
         self._print(self._paint(label, code))
+
+    def _on_tool_updated(self, event: ToolUpdated):
+        self._print(self._paint(f"  │ {event.partial}", DIM))
 
 
 def _first_line(text: str) -> str:

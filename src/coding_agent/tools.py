@@ -7,7 +7,7 @@ import os
 import signal
 from pathlib import Path
 
-from agent_core.types import AgentTool, ToolExecutionResult
+from agent_core.types import AgentTool, ProgressSink, ToolExecutionResult
 from ai.types import ToolCallContent
 from coding_agent.workspace import WorkSpace as Workspace
 from coding_agent.workspace import WorkspaceError
@@ -41,16 +41,21 @@ class ToolBase(AgentTool):
             raise ToolFailure(f"parameter '{key}' must be a string")
         return value
 
-    async def execute(self, call: ToolCallContent, cancel: asyncio.Event):
+    async def execute(
+        self,
+        call: ToolCallContent,
+        cancel: asyncio.Event,
+        on_progress: ProgressSink | None = None,
+    ):
         # try: self._run(call) except ...: is_error
         try:
-            return await self._run(call)
+            return await self._run(call, on_progress)
         except ToolFailure as exc:
             return ToolExecutionResult(content=str(exc), details={"error": str(exc)}, is_error=True)
         except WorkspaceError as exc:
             return ToolExecutionResult(content=str(exc), details={"error": str(exc)}, is_error=True)
 
-    async def _run(self, call) -> ToolExecutionResult:
+    async def _run(self, call, on_progress: ProgressSink | None = None) -> ToolExecutionResult:
         raise NotImplementedError
 
 
@@ -63,7 +68,7 @@ class ReadTool(ToolBase):
         "required": ["path"],
     }
 
-    async def _run(self, call: ToolCallContent):
+    async def _run(self, call: ToolCallContent, on_progress: ProgressSink | None = None):
         path = self._arg(call, "path")
         content, hint = self.workspace.read(path)
         return ToolExecutionResult(content=content, details={"path": path, "truncated": bool(hint)})
@@ -81,7 +86,7 @@ class WriteTool(ToolBase):
         "required": ["path", "content"],
     }
 
-    async def _run(self, call: ToolCallContent):
+    async def _run(self, call: ToolCallContent, on_progress: ProgressSink | None = None):
         path, content = self._arg(call, "path"), self._arg(call, "content")
         try:
             self.workspace.write(path, content)
@@ -109,7 +114,7 @@ class EditTool(ToolBase):
         "required": ["path", "old_text", "new_text"],
     }
 
-    async def _run(self, call: ToolCallContent):
+    async def _run(self, call: ToolCallContent, on_progress: ProgressSink | None = None):
         path = self._arg(call, "path")
         old_text = self._arg(call, "old_text")
         new_text = self._arg(call, "new_text")
@@ -141,7 +146,7 @@ class GrepTool(ToolBase):
         "required": ["pattern"],
     }
 
-    async def _run(self, call: ToolCallContent):
+    async def _run(self, call: ToolCallContent, on_progress: ProgressSink | None = None):
         pattern = self._arg(call, "pattern")
         path = self._arg(call, "path") if call.arguments.get("path") else "."
         target = self.workspace.resolve(path)
@@ -179,7 +184,7 @@ class FindTool(ToolBase):
         "required": ["pattern"],
     }
 
-    async def _run(self, call: ToolCallContent):
+    async def _run(self, call: ToolCallContent, on_progress: ProgressSink | None = None):
         pattern = self._arg(call, "pattern")
         found: list[str] = []
         for base, dirs, files in os.walk(self.workspace.root):
@@ -206,7 +211,7 @@ class ListTool(ToolBase):
         "properties": {"path": {"type": "string", "description": "目录路径（默认工作区根）"}},
     }
 
-    async def _run(self, call: ToolCallContent):
+    async def _run(self, call: ToolCallContent, on_progress: ProgressSink | None = None):
         path = self._arg(call, "path") if call.arguments.get("path") else "."
         target = self.workspace.resolve(path)
         if not target.is_dir():
@@ -225,6 +230,17 @@ class ListTool(ToolBase):
         return ToolExecutionResult(content="\n".join(entries), details={"path": path})
 
 
+async def _read_stream(stream, sink, buffer):
+    while True:
+        line = await stream.readline()
+        if not line:
+            break
+        text = line.decode("utf-8", errors="replace")
+        buffer.append(text)  # 内容保留换行
+        if sink:
+            sink(text.rstrip("\n"))
+
+
 class BashTool(ToolBase):
     name: str = "bash"
     description: str = (
@@ -240,7 +256,7 @@ class BashTool(ToolBase):
         "required": ["command"],
     }
 
-    async def _run(self, call: ToolCallContent):
+    async def _run(self, call: ToolCallContent, on_progress: ProgressSink | None = None):
         command = self._arg(call, "command")
         raw_timeout = call.arguments.get("timeout", DEFAULT_TIMEOUT)
         try:
@@ -248,6 +264,8 @@ class BashTool(ToolBase):
         except (TypeError, ValueError):
             timeout = DEFAULT_TIMEOUT
         timeout = min(max(timeout, 1), MAX_TIMEOUT)
+
+        # 完整bash content
 
         # 独立进程组：超时/取消时能终止整个组（04-boundaries）
         proc = await asyncio.create_subprocess_shell(
@@ -257,8 +275,24 @@ class BashTool(ToolBase):
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
         )
+
+        if proc.stdout is None:
+            raise RuntimeError("stdout没有被PIPE捕获")
+
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+
+        async def read_stdout():
+            await _read_stream(proc.stdout, on_progress, stdout_lines)
+
+        async def read_stderr():
+            await _read_stream(proc.stderr, None, stderr_lines)  # stderr 也可回调，你定
+
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            await asyncio.wait_for(
+                asyncio.gather(read_stdout(), read_stderr()),
+                timeout=timeout,
+            )
         except TimeoutError:
             await _kill_process_group(proc)
             await proc.wait()
@@ -272,14 +306,14 @@ class BashTool(ToolBase):
                 is_error=False,  # 超时不是"错误"，模型可继续（04-boundaries 失败分类）
             )
         except asyncio.CancelledError:
-            # Ctrl+C 取消：终止整个进程组后再传播（04-boundaries 取消语义）
             await _kill_process_group(proc)
             await proc.wait()
             raise
 
-        text = stdout.decode("utf-8", errors="replace")
-        if stderr:
-            text += ("\n" if text else "") + "stderr: " + stderr.decode("utf-8", errors="replace")
+        await proc.wait()
+        text = "".join(stdout_lines)
+        if stderr_lines:
+            text += "\nstderr: " + "".join(stderr_lines)
         return ToolExecutionResult(
             content=text,
             details={"command": command, "exit_code": proc.returncode},
