@@ -8,6 +8,7 @@
 
 from agent_core.events import (
     AgentEnded,
+    ContextCompacted,
     MessageDelta,
     ThinkingDeltaEvent,
     ToolCompleted,
@@ -63,6 +64,8 @@ class TerminalRenderer:
             self._on_ended(event)
         elif isinstance(event, ToolUpdated):
             self._on_tool_updated(event)
+        elif isinstance(event, ContextCompacted):
+            self._on_compacted(event)
         # 其余事件：v0 不渲染
 
     def _print(self, text: str = "", *, end: str = "\n") -> None:
@@ -119,6 +122,10 @@ class TerminalRenderer:
 
     def _on_tool_updated(self, event: ToolUpdated):
         self._print(self._paint(f"  │ {event.partial}", DIM))
+
+    def _on_compacted(self, event: ContextCompacted) -> None:
+        self._break_stream()
+        self._print(self._paint(f"  [上下文已压缩 · 保留 {event.retained_count} 条最近消息]", DIM))
 
 
 def _first_line(text: str) -> str:

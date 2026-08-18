@@ -6,11 +6,13 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
+from agent_core.compaction import CompactionSettings, compact_messages
 from agent_core.events import AgentEvent, MessageCompleted
 from agent_core.loop import run_loop
 from agent_core.types import AgentTool
 from ai.types import (
     AssistantMessage,
+    CompactionSummaryMessage,
     Message,
     TextContent,
     ToolCallContent,
@@ -29,15 +31,18 @@ class Agent:
         system_prompt: str | None = None,
         tools: Sequence[AgentTool] = (),
         max_turns: int = 20,
+        history: Sequence[Message] = (),
+        compaction_settings: CompactionSettings | None = None,
     ):
         self._tools: Sequence[AgentTool] = tools
         self._provider = provider
         self._model = model
         self._system_prompt = system_prompt
         self._listeners: set = set()  # 对应 pi 的 listeners Set
-        self._messages: list[Message] = []  # 对应 pi 的 state.messages
         self.max_turns = max_turns
         self._cancel = asyncio.Event()
+        self._messages = list(history)
+        self._compaction_settings = compaction_settings or CompactionSettings()
 
     def cancel(self) -> None:
         """请求取消活动轮次（03-contracts §4：CLI Ctrl+C -> CodingSession -> Agent）。"""
@@ -72,6 +77,18 @@ class Agent:
                 await result
 
     async def run(self, user_prompt: str):
+
+        async def _compact_and_sync(messages: list[Message]):
+            new_messages = await compact_messages(
+                messages,
+                self._provider,
+                self._model,
+                self._compaction_settings,
+                force=False,
+            )
+            self._messages = list(new_messages)
+            return new_messages
+
         self._cancel.clear()  # 新轮次清空上次取消信号（否则下一轮立即判 cancelled）
         try:
             return await run_loop(
@@ -84,12 +101,28 @@ class Agent:
                 history=self._messages,
                 max_turns=self.max_turns,
                 cancel=self._cancel,
+                compactor=_compact_and_sync,
             )
         except asyncio.CancelledError:
             # 轮次在工具执行中被取消：历史末尾会留下"悬空"的 assistant 工具调用
             # （OpenAI 要求 tool 消息紧随 tool_calls，否则下一轮请求 400）。
             self._rollback_interrupted_tool_turn()
             raise
+
+    async def compact_now(self):
+        if not self._messages:
+            return "当前上下文无需压缩"
+        new_messages = await compact_messages(
+            self._messages,
+            self._provider,
+            self._model,
+            self._compaction_settings,
+            force=True,
+        )
+        self._messages = list(new_messages)
+        if isinstance(new_messages[0], CompactionSummaryMessage):
+            return new_messages[0].summary
+        return "当前上下文无需压缩"
 
     def _rollback_interrupted_tool_turn(self) -> None:
         """被取消轮次的未配对工具调用补上 "[cancelled by user]" 结果。
@@ -100,13 +133,17 @@ class Agent:
         """
 
         messages = self._messages
+        index = len(messages) - 1
         paired: set[str] = set()
-        while messages and isinstance(messages[-1], ToolResult):
-            last = messages.pop()
-            assert isinstance(last, ToolResult)  # 已由 while 条件保证
-            paired.add(last.toolCallId)
-        if messages and isinstance(messages[-1], AssistantMessage):
-            calls = [b for b in messages[-1].content if isinstance(b, ToolCallContent)]
+        while index >= 0 and isinstance(messages[index], ToolResult):
+            result = messages[index]
+            assert isinstance(result, ToolResult)  # 已由 while 条件保证
+            paired.add(result.toolCallId)
+            index -= 1
+
+        assistant = messages[index] if index >= 0 else None
+        if isinstance(assistant, AssistantMessage):
+            calls = [b for b in assistant.content if isinstance(b, ToolCallContent)]
             for call in calls:
                 if call.id not in paired:
                     messages.append(

@@ -118,6 +118,32 @@ def test_agent_with_tools_history_includes_tool_result() -> None:
     assert tool_result.toolCallId == "c1"
 
 
+def test_cancelled_multi_tool_turn_preserves_completed_results() -> None:
+    agent = Agent(provider=None, model=MODEL)
+    assistant = _msg(
+        [
+            ToolCallContent(id="c1", name="first", arguments={}),
+            ToolCallContent(id="c2", name="second", arguments={}),
+        ],
+        "toolUse",
+    )
+    completed = ToolResult(
+        toolCallId="c1",
+        toolName="first",
+        content=[TextContent(text="ok")],
+        details={},
+        timestamp=TS,
+    )
+    agent._messages = [assistant, completed]
+
+    agent._rollback_interrupted_tool_turn()
+
+    assert [m.toolCallId for m in agent.messages if isinstance(m, ToolResult)] == ["c1", "c2"]
+    cancelled = agent.messages[-1]
+    assert isinstance(cancelled, ToolResult)
+    assert cancelled.content[0].text == "[cancelled by user]"
+
+
 def test_subscriber_sees_tool_result_message() -> None:
     provider = FakeProvider(
         [

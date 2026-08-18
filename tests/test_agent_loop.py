@@ -135,6 +135,18 @@ def test_model_failed_path() -> None:
     assert "AgentEnded" in events
 
 
+def test_incomplete_provider_stream_returns_internal_error() -> None:
+    class IncompleteProvider:
+        async def stream(self, context):
+            return
+            yield  # make this an async generator
+
+    result, events = asyncio.run(_run(IncompleteProvider()))
+
+    assert result == "模型调用未返回完整消息"
+    assert "AgentEnded" in events
+
+
 def test_history_accumulates_across_user_inputs() -> None:
     """第二次 run 时带上第一次的完整轨迹（user + assistant）。"""
     from ai.types import UserMessage

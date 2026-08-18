@@ -13,6 +13,10 @@
 5. `design/04-boundaries.md`：运行时、文件、命令和失败边界
 6. `design/05-acceptance.md`：验收场景和测试策略
 7. `design/06-delivery-plan.md`：开发顺序与设计评审门槛
+8. `design/07-tui.md`：TUI 设计
+9. `adr/0001-session-persistence.md`：会话持久化决策
+10. `adr/0002-context-compaction.md`：上下文压缩决策
+11. `adr/0003-tui-architecture.md`：TUI 架构与 Textual 选型
 
 `archive/` 保存较早的探索性方案，仅供学习回顾，不构成当前实现要求。
 

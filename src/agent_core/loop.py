@@ -13,6 +13,7 @@ from agent_core.events import (
     AgentEnded,
     AgentEvent,
     AgentStarted,
+    ContextCompacted,
     MessageCompleted,
     MessageDelta,
     MessageStarted,
@@ -25,6 +26,8 @@ from agent_core.events import (
 )
 from agent_core.types import AgentTool, ToolExecutionResult
 from ai.types import (
+    AssistantMessage,
+    CompactionSummaryMessage,
     Message,
     ModelConfig,
     ModelContext,
@@ -54,6 +57,7 @@ async def run_loop(
     max_turns: int = 20,
     cancel: asyncio.Event | None = None,
     history: Sequence[Message] | None,
+    compactor: Callable[[list[Message]], Awaitable[list[Message]]] | None = None,
 ):
     # Trace开始
     await emit(AgentStarted())
@@ -80,6 +84,20 @@ async def run_loop(
                 ToolDefinition(name=t.name, description=t.description, parameters=t.parameters) for t in tools
             ]
 
+            # 调用模型前，先预先处理上下文
+            if compactor is not None:
+                new_messages = await compactor(messages)
+
+                # 为什么new_message[0]是compaction summary message类型？
+                if len(new_messages) != len(messages) and isinstance(new_messages[0], CompactionSummaryMessage):
+                    await emit(
+                        ContextCompacted(
+                            summary=new_messages[0].summary,
+                            retained_count=len(new_messages) - 1,
+                        )
+                    )
+                messages = new_messages
+
             # 模型调用：组上下文， 消费
             context = ModelContext(
                 model=model,
@@ -87,7 +105,7 @@ async def run_loop(
                 messages=messages,
                 tools=tool_definitions,
             )
-            assistant_message: Message
+            assistant_message: AssistantMessage | None = None
             # ai回复，空标记
             await emit(MessageStarted())
 
@@ -103,6 +121,10 @@ async def run_loop(
                     await emit(ThinkingDeltaEvent(delta=event.delta, partial=event.partial))
                 elif isinstance(event, StreamCompleted):
                     assistant_message = event.message
+
+            if assistant_message is None:
+                await emit(AgentEnded("internal_error"))
+                return "模型调用未返回完整消息"
 
             await emit(MessageCompleted(assistant_message))
 

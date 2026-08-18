@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
-Role = Literal["system", "user", "assistant", "toolResult"]
+Role = Literal["system", "user", "assistant", "toolResult", "compactionSummary"]
 ContentType = Literal["thinking", "text", "toolCall"]
 
 # 占位类型：字段注释已声明意图，具体取值随 Provider 适配（Phase 1/2）确定。
@@ -73,7 +73,15 @@ class ToolResult:
     role: Role = "toolResult"
 
 
-Message = UserMessage | AssistantMessage | ToolResult
+@dataclass(frozen=True, slots=True)
+class CompactionSummaryMessage:
+    summary: str
+    timestamp: datetime
+    tokens_before: int = 0
+    role: Role = "compactionSummary"
+
+
+Message = UserMessage | AssistantMessage | ToolResult | CompactionSummaryMessage
 
 
 # -----------模型流事件

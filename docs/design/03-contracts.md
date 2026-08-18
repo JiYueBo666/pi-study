@@ -23,6 +23,7 @@ Provider 的输入是 `ModelContext`：
 | `UserMessage` | 调用方/会话 | 开始或继续一个用户轮次 |
 | `AssistantMessage` | 模型流聚合器 | 可包含文本和工具调用 |
 | `ToolResultMessage` | 工具执行后的 Agent | 引用来源工具调用 ID |
+| `CompactionSummaryMessage` | 上下文压缩器 | 替代被压缩的旧历史，进入后续上下文 |
 
 内容采用块（block）而非一个过载字符串。v0 只需要文本块和工具调用块。思考块、图片块、Provider 专属元数据等到真实工作流需要时再加入。
 
@@ -102,11 +103,51 @@ tool_started / tool_updated / tool_completed
 
 `tool_updated` 是工具执行期间的进度事件：携带局部文本（如 bash 输出的一行），只用于展示，不进入消息历史，也不替代最终的 `tool_completed`。
 
+### 会话存储契约
+
+`agent_core.session.SessionStore` 是产品层调用通用会话存储的契约：
+
+```text
+save(meta, messages)              保存会话
+load(session_id) -> (meta, msgs)  恢复会话
+list() -> [meta]                  列出会话元数据
+delete(session_id)                删除会话
+resolve(id_or_prefix) -> id       唯一前缀解析
+```
+
+不变量：
+
+- 协议层只暴露 `SessionMeta` 和 `ai.types.Message`，不暴露文件格式。
+- 具体后端（如 `JsonlSessionStore`）负责 `Message <-> JSON` 转换、原子写、损坏容错。
+- `save()` 自动维护 `message_count` 和 `updated_at`，调用方不需要手动同步。
+- 会话文件的存储位置（如工作区 `.pi-study/sessions/`）属于产品层组装决策，不属于 `SessionStore` 协议。
+
+### 上下文压缩契约
+
+`agent_core.compaction` 是通用上下文压缩能力：
+
+```text
+CompactionSettings         压缩配置（阈值、保留预算、是否启用）
+estimate_tokens(message)   粗略 token 估算
+should_compact(messages)   是否触发自动压缩
+find_cut_index(messages)   按轮次边界找切点
+summarize(messages)        生成结构化摘要
+compact_messages(messages) 压缩总入口（自动 / 手动 force）
+```
+
+不变量：
+
+- 压缩结果仍是一条消息列表，其中旧历史被 `CompactionSummaryMessage` 替代，最近轮次保留原文。
+- 切点只允许在 `UserMessage` 边界，禁止拆散 `AssistantMessage(tool_calls)` 与对应 `ToolResult`。
+- 摘要失败时必须安全返回原消息，绝不丢对话。
+- 手动 `/compact` 使用 `force=True`：有多个轮次时保留最后一个轮次，压缩之前全部历史。
+- `CompactionSummaryMessage` 是通用消息，进入历史与持久化；发送给模型时转换为 `user` 消息。
+
 ## 3. `coding_agent`：Coding 产品通信
 
 `CodingSession` 拥有工作区、Coding Prompt、具体工具和一个 Agent 实例。它把用户输入转换为 Agent prompt，并将事件转发给 CLI。
 
-Coding 层未来可为压缩、steering、会话说明增加自定义消息；v0 直接使用基础 LLM 消息。
+上下文压缩已由 `agent_core` 提供；Coding 层负责配置阈值、暴露 `/compact` 命令并渲染压缩事件。Coding 层未来仍可为 steering、会话说明增加自定义消息。
 
 ## 4. 取消
 

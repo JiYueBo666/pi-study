@@ -8,6 +8,7 @@ from openai import AsyncOpenAI
 from ai.stream import AssistantMessageBuilder
 from ai.types import (
     AssistantMessage,
+    CompactionSummaryMessage,
     ModelConfig,
     ModelContext,
     StreamCompleted,
@@ -80,6 +81,13 @@ def _message_params(context: ModelContext):
                     )
                 else:
                     params.append({"role": "assistant", "content": text})
+        elif isinstance(m, CompactionSummaryMessage):
+            params.append(
+                {
+                    "role": "user",
+                    "content": f"[Previous conversation summary]\n{m.summary}",
+                }
+            )
     return params
 
 

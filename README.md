@@ -26,8 +26,12 @@ v0 完成（对应 `docs/design/06-delivery-plan.md` 的 Phase 1-5）：
 - 事件系统：`AgentEvent` 生命周期（Agent/Turn/Message/Tool 四层嵌套）、`subscribe` 观察、同步屏障
 - Coding 工具：`read` `write` `edit` `grep` `find` `ls` `bash`（工作区路径边界、命令超时/进程组终止）
 - CLI：交互模式、流式渲染（思考/文本/工具/终态）、Ctrl+C 两段取消语义
+- 会话持久化与恢复：JSONL 存储、自动保存、`--resume / --list-sessions / --forget`
+- 命令系统：UI 无关的 `/` 命令（当前含 `/quit`、`/compact`），Tab 补全
+- 上下文压缩：自动压缩 + `/compact` 手动压缩，安全失败不丢对话
+- TUI：`mypi` 启动 Textual 界面（增量迁移中，CLI 保持可用）
 
-明确不做（v0 非目标）：持久会话、上下文压缩、TUI、MCP、子 Agent、命令沙箱。
+仍不做（当前阶段非目标）：MCP、子 Agent、命令沙箱。
 
 ## 安装与运行
 
@@ -54,7 +58,33 @@ pi-study                          # 工作区 = 当前目录
 pi-study --workspace /path/to/repo --max-turns 20
 ```
 
-交互说明：运行中第一次 Ctrl+C 取消当前任务并回到提示符；idle 时再按一次退出。
+交互说明：运行中第一次 Ctrl+C 取消当前任务并回到提示符；idle 时再按一次退出；输入 `/quit`（或 `/exit`、`/q`）退出。
+
+TUI 模式：
+
+```bash
+mypi                              # 启动 TUI，工作区 = 当前目录
+mypi --workspace /path/to/repo    # 指定工作区
+```
+
+TUI 内命令：`/quit` 退出、`/compact` 压缩上下文、`/session` 打开会话选择弹窗（Enter 载入、D 删除）。
+
+### 会话持久化
+
+每次对话结束后自动保存到工作区的 `.pi-study/sessions/` 目录（已被 Git 忽略）。
+
+```bash
+# 列出当前工作区的会话
+pi-study --list-sessions
+
+# 恢复指定会话（支持唯一前缀）
+pi-study --resume sess_20260817-063216-3b0d
+
+# 删除指定会话
+pi-study --forget sess_20260817-063216-3b0d
+```
+
+隐私说明：会话文件包含原始用户输入、模型回复和工具输出，属于本地数据；不承诺加密或自动清理，删除请使用 `--forget` 或手动删除 `.pi-study/`。
 
 ## 开发
 

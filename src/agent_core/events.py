@@ -82,6 +82,12 @@ class ToolCompleted:
     result: ToolResult
 
 
+@dataclass(frozen=True, slots=True)
+class ContextCompacted:
+    summary: str
+    retained_count: int
+
+
 AgentEvent = (
     AgentStarted
     | AgentEnded
@@ -94,4 +100,5 @@ AgentEvent = (
     | ToolStarted
     | ToolUpdated
     | ToolCompleted
+    | ContextCompacted
 )
