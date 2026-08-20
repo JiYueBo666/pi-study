@@ -102,7 +102,9 @@ async def run_loop(
                 new_messages = await compactor(messages)
 
                 # 为什么new_message[0]是compaction summary message类型？
-                if len(new_messages) != len(messages) and isinstance(new_messages[0], CompactionSummaryMessage):
+                if len(new_messages) != len(messages) and isinstance(
+                    new_messages[0], CompactionSummaryMessage
+                ):
                     await emit(
                         ContextCompacted(
                             summary=new_messages[0].summary,
@@ -131,7 +133,9 @@ async def run_loop(
                     # 转发为 L1 事件：MessageDelta 带 delta + 累积快照
                     await emit(MessageDelta(delta=event.delta, partial=event.partial))
                 elif isinstance(event, ThinkingDelta):
-                    await emit(ThinkingDeltaEvent(delta=event.delta, partial=event.partial))
+                    await emit(
+                        ThinkingDeltaEvent(delta=event.delta, partial=event.partial)
+                    )
                 elif isinstance(event, StreamCompleted):
                     assistant_message = event.message
 
@@ -142,18 +146,26 @@ async def run_loop(
             await emit(MessageCompleted(assistant_message))
 
             messages.append(assistant_message)
-            calls = [b for b in assistant_message.content if isinstance(b, ToolCallContent)]
+            calls = [
+                b for b in assistant_message.content if isinstance(b, ToolCallContent)
+            ]
 
             if not calls:
                 await emit(TurnEnded(turn))
                 await emit(AgentEnded("completed"))
-                return "".join(b.text for b in assistant_message.content if isinstance(b, TextContent))
+                return "".join(
+                    b.text
+                    for b in assistant_message.content
+                    if isinstance(b, TextContent)
+                )
             for call in calls:
                 tool = tool_by_name.get(call.name)
 
                 # 没找到工具，返回执行结果。
                 if tool is None:
-                    exec_result = ToolExecutionResult(content=f"未知工具:{call.name}", is_error=True)
+                    exec_result = ToolExecutionResult(
+                        content=f"未知工具:{call.name}", is_error=True
+                    )
                 # 找到工具，构造请求进行审批。 is_safe的默认通过由业务层确认。
                 else:
                     # 有审批钩子，构造参数进行
@@ -164,7 +176,9 @@ async def run_loop(
                             call=call,
                             request_id=uuid4().hex,
                         )
-                        approval_task = asyncio.ensure_future(before_tool_call_hook(request))
+                        approval_task = asyncio.ensure_future(
+                            before_tool_call_hook(request)
+                        )
                         approval_requested = False
                         try:
                             # 让 hook 先完成 pending Future 的登记，再通知 UI。
@@ -190,7 +204,9 @@ async def run_loop(
                             )
                         if approved:
                             await emit(ToolStarted(call))
-                            exec_result = await _execute_tool_with_progress(tool, call, cancel or asyncio.Event(), emit)
+                            exec_result = await _execute_tool_with_progress(
+                                tool, call, cancel or asyncio.Event(), emit
+                            )
                         else:
                             exec_result = ToolExecutionResult(
                                 content=intent,
@@ -204,7 +220,9 @@ async def run_loop(
                     # 否则直接执行
                     else:
                         await emit(ToolStarted(call))
-                        exec_result = await _execute_tool_with_progress(tool, call, cancel or asyncio.Event(), emit)
+                        exec_result = await _execute_tool_with_progress(
+                            tool, call, cancel or asyncio.Event(), emit
+                        )
 
                 # 结果转成 ToolResult 消息（ai.types 里已有，role="toolResult"）
                 result_msg = ToolResult(
