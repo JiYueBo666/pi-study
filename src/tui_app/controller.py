@@ -51,6 +51,10 @@ class TuiController:
     async def run_command(self, text: str):
         return await self.registry.execute(text, self.command_context)
 
+    def resolve_approval(self, request_id: str, approved: bool) -> bool:
+        """把用户的 y/n 决策交给 CodingSession 的审批钩子。"""
+        return self.session.resolve_tool_approval(request_id, approved)
+
     async def load_session(self, session_id: str) -> None:
         meta, messages = self.session_store.load(session_id)
         self.session = self._session_factory(

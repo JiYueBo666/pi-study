@@ -17,6 +17,7 @@
 9. `adr/0001-session-persistence.md`：会话持久化决策
 10. `adr/0002-context-compaction.md`：上下文压缩决策
 11. `adr/0003-tui-architecture.md`：TUI 架构与 Textual 选型
+12. `adr/0004-tool-approval.md`：工具审批系统
 
 `archive/` 保存较早的探索性方案，仅供学习回顾，不构成当前实现要求。
 

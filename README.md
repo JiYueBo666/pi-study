@@ -29,6 +29,7 @@ v0 完成（对应 `docs/design/06-delivery-plan.md` 的 Phase 1-5）：
 - 会话持久化与恢复：JSONL 存储、自动保存、`--resume / --list-sessions / --forget`
 - 命令系统：UI 无关的 `/` 命令（当前含 `/quit`、`/compact`），Tab 补全
 - 上下文压缩：自动压缩 + `/compact` 手动压缩，安全失败不丢对话
+- 工具审批：不安全工具调用需用户输入 `y` / `n` 决定是否执行
 - TUI：`mypi` 启动 Textual 界面（增量迁移中，CLI 保持可用）
 
 仍不做（当前阶段非目标）：MCP、子 Agent、命令沙箱。

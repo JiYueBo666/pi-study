@@ -20,3 +20,4 @@ test/
 package.json
 package-lock.json
 .npmrc
+.pi-study/

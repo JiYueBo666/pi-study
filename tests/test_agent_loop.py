@@ -33,6 +33,7 @@ def _tool_call(name: str = "read", **args) -> ToolCallContent:
 class ReadTool(AgentTool):
     name = "read"
     description = ""
+    is_safe = True
     parameters = {}
 
     async def execute(self, call, cancel, on_progress=None) -> ToolExecutionResult:
@@ -174,6 +175,7 @@ def test_unknown_tool_returns_error_result() -> None:
 class ProgressTool(AgentTool):
     name = "progress"
     description = ""
+    is_safe = True
     parameters = {}
 
     async def execute(self, call, cancel, on_progress=None) -> ToolExecutionResult:
@@ -214,6 +216,7 @@ def test_tool_progress_events_gathered_when_tool_raises() -> None:
     class ExplodingTool(AgentTool):
         name = "boom"
         description = ""
+        is_safe = True
         parameters = {}
 
         async def execute(self, call, cancel, on_progress=None) -> ToolExecutionResult:
@@ -243,6 +246,7 @@ def test_tool_progress_events_gathered_when_tool_cancelled() -> None:
     class CancelledTool(AgentTool):
         name = "cancel"
         description = ""
+        is_safe = True
         parameters = {}
 
         async def execute(self, call, cancel, on_progress=None) -> ToolExecutionResult:

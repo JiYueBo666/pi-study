@@ -11,11 +11,14 @@ from agent_core.events import (
     MessageCompleted,
     MessageDelta,
     ThinkingDeltaEvent,
+    ToolApprovalCompleted,
+    ToolApprovalRequested,
     ToolCompleted,
     ToolStarted,
     ToolUpdated,
     TurnStarted,
 )
+from agent_core.types import ToolApprovalRequest
 from ai.types import (
     AssistantMessage,
     CompactionSummaryMessage,
@@ -99,6 +102,12 @@ class MyPiApp(TuiApp):
         background: transparent;
         color: $text-muted;
     }
+    .message.approval {
+        border: solid $warning;
+        background: $surface;
+        color: $text;
+        text-style: bold;
+    }
     #composer {
         height: auto;
         padding: 0 0 1 0;
@@ -147,6 +156,7 @@ class MyPiApp(TuiApp):
         self.title = "mypi"
         self._stream_kind: str | None = None
         self._stream_partial = ""
+        self._pending_approval: ToolApprovalRequest | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="app-shell"):
@@ -177,6 +187,10 @@ class MyPiApp(TuiApp):
             return
         self.query_one(CommandInput).value = ""
 
+        if self._pending_approval is not None:
+            self._handle_approval_input(text)
+            return
+
         if text.startswith("/"):
             palette = self.query_one("#command-palette", OptionList)
             if palette.display:
@@ -191,6 +205,49 @@ class MyPiApp(TuiApp):
         self.query_one(MessageList).add_message(text, role="user")
         self._set_status("处理中")
         self.run_worker(self._run_prompt(text), exclusive=True, group="agent")
+
+    # ---- 工具审批 ----
+
+    def _handle_approval_input(self, text: str) -> None:
+        request = self._pending_approval
+        if request is None:
+            return
+
+        value = text.strip().lower()
+        log = self.query_one(MessageList)
+        if value in ("y", "yes"):
+            self.controller.resolve_approval(request.request_id, True)
+            self._pending_approval = None
+            log.add_message("已批准工具调用", role="system")
+            self._set_status("已批准 · 继续执行")
+            self.query_one(CommandInput).disabled = True
+        elif value in ("n", "no"):
+            self.controller.resolve_approval(request.request_id, False)
+            self._pending_approval = None
+            log.add_message("已拒绝工具调用", role="system")
+            self._set_status("已拒绝")
+            self.query_one(CommandInput).disabled = True
+        else:
+            log.add_message("请输入 y 或 n", role="system")
+            self.query_one(CommandInput).focus()
+
+    def _show_approval_prompt(self, request: ToolApprovalRequest) -> None:
+        self._pending_approval = request
+        args = request.call.arguments
+        lines = [
+            "⚠️  工具调用需要审批",
+            "",
+            f"工具：{request.tool_name}",
+            f"说明：{request.tool_description}",
+            f"参数：{args}",
+            "",
+            "允许执行？输入 y / n",
+        ]
+        self.query_one(MessageList).add_message("\n".join(lines), role="approval")
+        input_widget = self.query_one(CommandInput)
+        input_widget.disabled = False
+        input_widget.focus()
+        self._set_status("等待审批 y/n")
 
     # ---- 命令补全弹窗 ----
 
@@ -357,6 +414,12 @@ class MyPiApp(TuiApp):
             status.update(f"运行中 · {event.call.name}")
         elif isinstance(event, ToolUpdated):
             status.update(f"运行中 · {event.partial or event.call.name}")
+        elif isinstance(event, ToolApprovalRequested):
+            self._finish_stream()
+            self._show_approval_prompt(event.request)
+        elif isinstance(event, ToolApprovalCompleted):
+            self._pending_approval = None
+            status.update("已批准" if event.approved else "已拒绝")
         elif isinstance(event, ToolCompleted):
             self._finish_stream()
             mark = "✓" if not event.result.isError else "✗"

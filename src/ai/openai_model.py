@@ -166,7 +166,9 @@ async def stream(client: AsyncOpenAI, model: ModelConfig, context: ModelContext)
 
                 if choice.delta.content:
                     builder.add_text(choice.delta.content)
-                    yield TextDelta(delta=choice.delta.content, partial="".join(builder.get_parts))
+                    yield TextDelta(
+                        delta=choice.delta.content, partial="".join(builder.get_parts)
+                    )
 
                 if choice.finish_reason:
                     finish_reason = choice.finish_reason
@@ -184,12 +186,16 @@ async def stream(client: AsyncOpenAI, model: ModelConfig, context: ModelContext)
                         name=fn.name if fn else None,
                         arguments_delta=fn.arguments if fn else "",
                     )
-    except Exception as exc:  # 流中断（网络等）-> StreamFailed，不外抛（03-contracts 失败分类）
+    except (
+        Exception
+    ) as exc:  # 流中断（网络等）-> StreamFailed，不外抛（03-contracts 失败分类）
         await _close_quietly(sdk_stream)
         yield StreamFailed(error=f"{type(exc).__name__}: {exc}")
         return
     await _close_quietly(sdk_stream)
-    yield StreamCompleted(message=builder.build(stop_reason=_stop_reason(finish_reason), usage={}))
+    yield StreamCompleted(
+        message=builder.build(stop_reason=_stop_reason(finish_reason), usage={})
+    )
 
 
 async def _close_quietly(sdk_stream) -> None:

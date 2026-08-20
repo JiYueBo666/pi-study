@@ -4,7 +4,7 @@ import asyncio
 from pathlib import Path
 
 from ai.types import ToolCallContent
-from coding_agent.tools import build_tools
+from coding_agent.tools_pacakge.tools import build_tools
 from coding_agent.workspace import WorkSpace as Workspace
 
 
@@ -18,7 +18,9 @@ async def _exec(tool, **args):
 
 async def _exec_with_progress(tool, **args):
     lines: list[str] = []
-    result = await tool.execute(_call(tool.name, **args), asyncio.Event(), on_progress=lines.append)
+    result = await tool.execute(
+        _call(tool.name, **args), asyncio.Event(), on_progress=lines.append
+    )
     return result, lines
 
 
@@ -32,7 +34,9 @@ def test_read_write_edit_roundtrip(tmp_path: Path) -> None:
     assert not r.is_error
     r = asyncio.run(_exec(tools["read"], path="new.txt"))
     assert r.content == "hello"
-    r = asyncio.run(_exec(tools["edit"], path="new.txt", old_text="hello", new_text="world"))
+    r = asyncio.run(
+        _exec(tools["edit"], path="new.txt", old_text="hello", new_text="world")
+    )
     assert not r.is_error
     assert (tmp_path / "new.txt").read_text() == "world"
 
@@ -104,14 +108,20 @@ def test_bash_timeout_kills_process(tmp_path: Path) -> None:
 
 def test_bash_progress_streams_stdout_lines(tmp_path: Path) -> None:
     tools = _tools(tmp_path)
-    r, lines = asyncio.run(_exec_with_progress(tools["bash"], command="printf 'a\\nb\\nc\\n'"))
+    r, lines = asyncio.run(
+        _exec_with_progress(tools["bash"], command="printf 'a\\nb\\nc\\n'")
+    )
     assert not r.is_error
     assert lines == ["a", "b", "c"]
 
 
 def test_bash_timeout_keeps_received_progress(tmp_path: Path) -> None:
     tools = _tools(tmp_path)
-    r, lines = asyncio.run(_exec_with_progress(tools["bash"], command="printf 'start\\n'; sleep 5", timeout=1))
+    r, lines = asyncio.run(
+        _exec_with_progress(
+            tools["bash"], command="printf 'start\\n'; sleep 5", timeout=1
+        )
+    )
     assert r.details.get("timed_out")
     assert "start" in lines
 
@@ -119,4 +129,6 @@ def test_bash_timeout_keeps_received_progress(tmp_path: Path) -> None:
 def test_missing_parameter_is_error(tmp_path: Path) -> None:
     tools = _tools(tmp_path)
     r = asyncio.run(_exec(tools["read"]))
-    assert r.is_error and "parameter" in r.content
+    assert r.is_error
+    assert "path" in r.content
+    assert r.details["validation_error"] is True

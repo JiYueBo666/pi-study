@@ -8,7 +8,7 @@ from typing import Any
 
 from agent_core.compaction import CompactionSettings, compact_messages
 from agent_core.events import AgentEvent, MessageCompleted
-from agent_core.loop import run_loop
+from agent_core.loop import ToolApprovalHook, run_loop
 from agent_core.types import AgentTool
 from ai.types import (
     AssistantMessage,
@@ -33,6 +33,7 @@ class Agent:
         max_turns: int = 20,
         history: Sequence[Message] = (),
         compaction_settings: CompactionSettings | None = None,
+        beforeToolcallHook: ToolApprovalHook | None = None,
     ):
         self._tools: Sequence[AgentTool] = tools
         self._provider = provider
@@ -43,6 +44,7 @@ class Agent:
         self._cancel = asyncio.Event()
         self._messages = list(history)
         self._compaction_settings = compaction_settings or CompactionSettings()
+        self.beforeToolcallHook = beforeToolcallHook
 
     def cancel(self) -> None:
         """请求取消活动轮次（03-contracts §4：CLI Ctrl+C -> CodingSession -> Agent）。"""
@@ -102,6 +104,7 @@ class Agent:
                 max_turns=self.max_turns,
                 cancel=self._cancel,
                 compactor=_compact_and_sync,
+                before_tool_call_hook=self.beforeToolcallHook,
             )
         except asyncio.CancelledError:
             # 轮次在工具执行中被取消：历史末尾会留下"悬空"的 assistant 工具调用

@@ -6,7 +6,9 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Self
+
+from pydantic import BaseModel
 
 Role = Literal["system", "user", "assistant", "toolResult", "compactionSummary"]
 ContentType = Literal["thinking", "text", "toolCall"]
@@ -127,7 +129,14 @@ class StreamFailed:
     message: AssistantMessage | None = None  # 失败前已流出的部分
 
 
-StreamEvent = StreamStarted | ThinkingDelta | TextDelta | ToolCallDelta | StreamCompleted | StreamFailed
+StreamEvent = (
+    StreamStarted
+    | ThinkingDelta
+    | TextDelta
+    | ToolCallDelta
+    | StreamCompleted
+    | StreamFailed
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +151,19 @@ class ToolDefinition:
     name: str
     description: str
     parameters: dict[str, Any]
+    parameter_model: type[BaseModel] | None = None
+
+    @classmethod
+    def from_model(
+        cls, *, name: str, description: str, parameter_model: type[BaseModel]
+    ) -> Self:
+        """从 Pydantic 参数模型生成 provider 所需的 JSON Schema。"""
+        return cls(
+            name=name,
+            description=description,
+            parameters=parameter_model.model_json_schema(),
+            parameter_model=parameter_model,
+        )
 
 
 @dataclass(frozen=True, slots=True)

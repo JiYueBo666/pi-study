@@ -72,6 +72,35 @@ details  -> 产品专属结构化信息，用于日志/UI/会话
 
 工具执行错误以 `is_error=True` 的结果表达，不是未捕获的 Loop 异常。模型可以据此重新发起修正后的调用。
 
+### 工具审批契约
+
+工具执行前可经过审批钩子：
+
+```text
+AgentTool.is_safe            工具是否安全（false 时进入审批流程）
+ToolApprovalRequest          审批请求：工具名、说明、调用参数、request_id
+ToolApprovalResult           (approved, intent) 二元组
+before_tool_call_hook        agent_core 调用，业务层返回是否允许
+```
+
+流程：
+
+```text
+Agent 发现不安全工具
+  -> 构造 ToolApprovalRequest
+  -> 发出 ToolApprovalRequested 事件
+  -> 等待业务层审批钩子返回 (approved, intent)
+  -> 发出 ToolApprovalCompleted 事件
+  -> approved=True 则继续执行工具，否则生成拒绝 ToolResult
+```
+
+不变量：
+
+- 审批钩子由业务层（`coding_agent`）提供，`agent_core` 只负责调用。
+- 安全工具（`is_safe=True`）默认不触发审批，直接执行。
+- 审批期间 UI 应暂停工具执行并等待用户输入 y/n。
+- 取消会话时，未决审批 Future 必须被取消。
+
 ### Agent 状态和结果
 
 Agent 状态是可变的进程内运行状态：已配置模型、当前系统提示词、已注册工具、有序消息、运行状态、取消句柄。CLI 不可直接修改它。
@@ -97,6 +126,7 @@ agent_started / agent_ended
 turn_started / turn_ended
 message_started / message_delta / message_completed
 tool_started / tool_updated / tool_completed
+tool_approval_requested / tool_approval_completed
 ```
 
 不变量：消费者可以渲染或记录事件，但不能用事件修改 Agent 状态。这样 CLI 行为不会反过来变成 Loop 行为。
@@ -147,7 +177,7 @@ compact_messages(messages) 压缩总入口（自动 / 手动 force）
 
 `CodingSession` 拥有工作区、Coding Prompt、具体工具和一个 Agent 实例。它把用户输入转换为 Agent prompt，并将事件转发给 CLI。
 
-上下文压缩已由 `agent_core` 提供；Coding 层负责配置阈值、暴露 `/compact` 命令并渲染压缩事件。Coding 层未来仍可为 steering、会话说明增加自定义消息。
+上下文压缩已由 `agent_core` 提供；Coding 层负责配置阈值、暴露 `/compact` 命令并渲染压缩事件。工具审批策略由 Coding 层实现：通过 `before_tool_call_hook` 返回是否允许，并维护待审批 Future 供 UI 回传 y/n。Coding 层未来仍可为 steering、会话说明增加自定义消息。
 
 ## 4. 取消
 

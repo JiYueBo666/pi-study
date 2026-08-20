@@ -37,6 +37,7 @@ def _msg(content: list, stop_reason: str = "stop") -> AssistantMessage:
 class ReadTool(AgentTool):
     name = "read"
     description = ""
+    is_safe = True
     parameters = {}
 
     async def execute(self, call, cancel, on_progress=None) -> ToolExecutionResult:

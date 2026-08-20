@@ -34,8 +34,8 @@ CLI 入口位于 `coding_agent`；TUI 入口位于 `tui_app`。两者都只消�
 | 包 | 拥有 | 不拥有 |
 |---|---|---|
 | `ai` | 供应商无关消息、上下文、工具 Schema、模型配置、流事件、供应商转换 | Loop、工具执行、文件、CLI、会话 |
-| `agent_core` | Agent 状态、模型/工具循环、工具协议、通用 Agent 事件、取消传播、通用会话层（`session/`）、上下文压缩（`compaction.py`） | Coding 工具、工作区、系统提示词、CLI |
-| `coding_agent` | Coding 系统提示词、工作区/会话、具体工具、工具策略、CLI 渲染、命令系统、会话目录与 CLI 组装 | Provider 协议解析、通用循环机制、通用会话存储实现 |
+| `agent_core` | Agent 状态、模型/工具循环、工具协议、通用 Agent 事件、取消传播、通用会话层（`session/`）、上下文压缩（`compaction.py`）、工具审批调用 | Coding 工具、工作区、系统提示词、CLI |
+| `coding_agent` | Coding 系统提示词、工作区/会话、具体工具、工具策略、审批策略（`is_safe` / y/n 决策）、CLI 渲染、命令系统、会话目录与 CLI 组装 | Provider 协议解析、通用循环机制、通用会话存储实现 |
 | `tui` | 终端组件、输入、布局、渲染（基于 Textual 的封装） | Agent 语义和 Coding 工具 |
 | `tui_app` | TUI 应用组装：把 CodingSession / CommandRegistry / AgentEvent 映射到 `tui` 组件 | 具体 TUI 框架细节（由 `tui` 封装） |
 

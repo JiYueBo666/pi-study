@@ -8,6 +8,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 from agent_core.events import (
     AgentEnded,
@@ -18,13 +19,20 @@ from agent_core.events import (
     MessageDelta,
     MessageStarted,
     ThinkingDeltaEvent,
+    ToolApprovalCompleted,
+    ToolApprovalRequested,
     ToolCompleted,
     ToolStarted,
     ToolUpdated,
     TurnEnded,
     TurnStarted,
 )
-from agent_core.types import AgentTool, ToolExecutionResult
+from agent_core.types import (
+    AgentTool,
+    ToolApprovalRequest,
+    ToolApprovalResult,
+    ToolExecutionResult,
+)
 from ai.types import (
     AssistantMessage,
     CompactionSummaryMessage,
@@ -45,6 +53,12 @@ from ai.types import (
 # 事件接收器：对应 pi 的 AgentEventSink（agent-loop.ts:47）
 EventSink = Callable[[AgentEvent], Awaitable[None]]
 
+# 审批钩子,传入请求，获取是否允许执行
+ToolApprovalHook = Callable[
+    [ToolApprovalRequest],
+    Awaitable[ToolApprovalResult],
+]
+
 
 async def run_loop(
     *,
@@ -58,6 +72,7 @@ async def run_loop(
     cancel: asyncio.Event | None = None,
     history: Sequence[Message] | None,
     compactor: Callable[[list[Message]], Awaitable[list[Message]]] | None = None,
+    before_tool_call_hook: ToolApprovalHook | None = None,
 ):
     # Trace开始
     await emit(AgentStarted())
@@ -80,9 +95,7 @@ async def run_loop(
             await emit(TurnStarted(turn))
 
             # 协议转换。
-            tool_definitions = [
-                ToolDefinition(name=t.name, description=t.description, parameters=t.parameters) for t in tools
-            ]
+            tool_definitions = [_tool_definition(tool) for tool in tools]
 
             # 调用模型前，先预先处理上下文
             if compactor is not None:
@@ -136,12 +149,63 @@ async def run_loop(
                 await emit(AgentEnded("completed"))
                 return "".join(b.text for b in assistant_message.content if isinstance(b, TextContent))
             for call in calls:
-                await emit(ToolStarted(call))
                 tool = tool_by_name.get(call.name)
+
+                # 没找到工具，返回执行结果。
                 if tool is None:
                     exec_result = ToolExecutionResult(content=f"未知工具:{call.name}", is_error=True)
+                # 找到工具，构造请求进行审批。 is_safe的默认通过由业务层确认。
                 else:
-                    exec_result = await _execute_tool_with_progress(tool, call, cancel or asyncio.Event(), emit)
+                    # 有审批钩子，构造参数进行
+                    if before_tool_call_hook:
+                        request = ToolApprovalRequest(
+                            tool_name=tool.name,
+                            tool_description=tool.description,
+                            call=call,
+                            request_id=uuid4().hex,
+                        )
+                        approval_task = asyncio.ensure_future(before_tool_call_hook(request))
+                        approval_requested = False
+                        try:
+                            # 让 hook 先完成 pending Future 的登记，再通知 UI。
+                            await asyncio.sleep(0)
+                            if not approval_task.done():
+                                approval_requested = True
+                                await emit(ToolApprovalRequested(request))
+                            approved, intent = await approval_task
+                        except BaseException:
+                            if not approval_task.done():
+                                approval_task.cancel()
+                            await asyncio.gather(
+                                approval_task,
+                                return_exceptions=True,
+                            )
+                            raise
+                        if approval_requested:
+                            await emit(
+                                ToolApprovalCompleted(
+                                    call=call,
+                                    approved=approved,
+                                )
+                            )
+                        if approved:
+                            await emit(ToolStarted(call))
+                            exec_result = await _execute_tool_with_progress(tool, call, cancel or asyncio.Event(), emit)
+                        else:
+                            exec_result = ToolExecutionResult(
+                                content=intent,
+                                details={
+                                    "approval_required": True,
+                                    "approved": False,
+                                    "request_id": request.request_id,
+                                },
+                                is_error=True,
+                            )
+                    # 否则直接执行
+                    else:
+                        await emit(ToolStarted(call))
+                        exec_result = await _execute_tool_with_progress(tool, call, cancel or asyncio.Event(), emit)
+
                 # 结果转成 ToolResult 消息（ai.types 里已有，role="toolResult"）
                 result_msg = ToolResult(
                     toolCallId=call.id,
@@ -151,7 +215,6 @@ async def run_loop(
                     timestamp=datetime.now(UTC),
                     isError=exec_result.is_error,
                 )
-
                 messages.append(result_msg)
                 await emit(MessageCompleted(result_msg))
                 await emit(ToolCompleted(call, result_msg))
@@ -197,3 +260,26 @@ async def _execute_tool_with_progress(
         if update_tasks:
             await asyncio.gather(*update_tasks)
     return exec_result
+
+
+def _tool_definition(tool: AgentTool) -> ToolDefinition:
+    """将工具的 Pydantic 模型或旧 JSON Schema 转换为模型定义。
+
+    ``args_model`` 是逐步迁移到 Pydantic 时新增的约定；没有它的第三方或
+    测试工具仍可继续提供 ``parameters`` 字典。
+    """
+
+    args_model = getattr(tool, "args_model", None)
+    if args_model is not None:
+        return ToolDefinition.from_model(
+            name=tool.name,
+            description=tool.description,
+            parameter_model=args_model,
+        )
+
+    parameters = getattr(tool, "parameters", {})
+    return ToolDefinition(
+        name=tool.name,
+        description=tool.description,
+        parameters=parameters,
+    )
