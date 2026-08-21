@@ -77,26 +77,29 @@ details  -> 产品专属结构化信息，用于日志/UI/会话
 工具执行前可经过审批钩子：
 
 ```text
-AgentTool.is_safe            工具是否安全（false 时进入审批流程）
-ToolApprovalRequest          审批请求：工具名、说明、调用参数、request_id
-ToolApprovalResult           (approved, intent) 二元组
-before_tool_call_hook        agent_core 调用，业务层返回是否允许
+BeforeToolCallHook           agent_core 的通用工具前置钩子
+ToolExecutionResult | None   覆盖工具结果 | 继续执行工具
+ToolBase.is_safe             coding_agent 工具的安全标记
+ToolApprovalRequest          coding_agent 审批请求
+ToolApprovalResult           coding_agent 内部的 (approved, intent) 二元组
 ```
 
 流程：
 
 ```text
-Agent 发现不安全工具
-  -> 构造 ToolApprovalRequest
-  -> 发出 ToolApprovalRequested 事件
-  -> 等待业务层审批钩子返回 (approved, intent)
-  -> 发出 ToolApprovalCompleted 事件
-  -> approved=True 则继续执行工具，否则生成拒绝 ToolResult
+agent_core 调用 BeforeToolCallHook(tool, call)
+  -> coding_agent 判断 is_safe 与 ApprovalMode
+  -> 需要审批时创建 ToolApprovalRequest 和 Future
+  -> coding_agent 发出 ToolApprovalRequested 事件
+  -> UI 回传 y/n，解析 Future
+  -> coding_agent 发出 ToolApprovalCompleted 事件
+  -> 批准时 hook 返回 None；拒绝时返回 ToolExecutionResult
 ```
 
 不变量：
 
-- 审批钩子由业务层（`coding_agent`）提供，`agent_core` 只负责调用。
+- `agent_core` 不依赖审批类型、安全标记、审批事件或拒绝文案。
+- 审批钩子由业务层（`coding_agent`）提供，`agent_core` 只解释钩子的通用返回值。
 - 安全工具（`is_safe=True`）默认不触发审批，直接执行。
 - 审批期间 UI 应暂停工具执行并等待用户输入 y/n。
 - 取消会话时，未决审批 Future 必须被取消。
@@ -198,4 +201,3 @@ tool_call_id：连接模型工具请求及其结果
 ```
 
 消息顺序代表因果顺序；事件顺序代表观察到的运行顺序。会话、运行、事件 ID 只会在持久化、重放或外部客户端出现时才需要，不能仅为了未来假设提前加入。
-

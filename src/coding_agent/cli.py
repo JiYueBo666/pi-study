@@ -24,9 +24,33 @@ from coding_agent.commands import (
     CommandRegistry,
     register_builtin_commands,
 )
+from coding_agent.event import ToolApprovalRequested
 from coding_agent.provider import ProviderAdapter
 from coding_agent.render import DIM, RESET, TerminalRenderer
 from coding_agent.session import CodingSession
+
+
+def _approval_listener(session: CodingSession):
+    """为终端 CLI 提供审批交互，避免 ASK 模式下无人解析 Future。"""
+
+    def listener(event: object) -> None:
+        if not isinstance(event, ToolApprovalRequested):
+            return
+
+        request = event.request
+        print(f"\n工具调用需要审批: {request.tool_name}")
+        print(f"说明: {request.tool_description}")
+        print(f"参数: {request.call.arguments}")
+
+        while True:
+            answer = input("允许执行？[y/n] ").strip().lower()
+            if answer in {"y", "yes", "n", "no"}:
+                approved = answer in {"y", "yes"}
+                session.resolve_tool_approval(request.request_id, approved)
+                return
+            print("请输入 y 或 n")
+
+    return listener
 
 
 def parse_args() -> argparse.Namespace:
@@ -179,6 +203,7 @@ async def async_main() -> int:
             created_at=resume_meta.created_at if resume_meta else None,
         )
         session.agent.subscribe(TerminalRenderer(color=not args.no_color))
+        session.subscribe(_approval_listener(session))
 
         prompt = " ".join(args.prompt).strip()
         if prompt:

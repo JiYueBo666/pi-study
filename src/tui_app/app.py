@@ -11,20 +11,22 @@ from agent_core.events import (
     MessageCompleted,
     MessageDelta,
     ThinkingDeltaEvent,
-    ToolApprovalCompleted,
-    ToolApprovalRequested,
     ToolCompleted,
     ToolStarted,
     ToolUpdated,
     TurnStarted,
 )
-from agent_core.types import ToolApprovalRequest
 from ai.types import (
     AssistantMessage,
     CompactionSummaryMessage,
     TextContent,
     ToolResult,
     UserMessage,
+)
+from coding_agent.event import (
+    ToolApprovalCompleted,
+    ToolApprovalRequest,
+    ToolApprovalRequested,
 )
 from tui.app import TuiApp
 from tui.widgets import CommandInput, MessageList

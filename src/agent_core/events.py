@@ -8,7 +8,6 @@
 
 from dataclasses import dataclass
 
-from agent_core.types import ToolApprovalRequest
 from ai.types import Message, ToolCallContent, ToolResult
 
 
@@ -89,17 +88,6 @@ class ContextCompacted:
     retained_count: int
 
 
-@dataclass(frozen=True, slots=True)
-class ToolApprovalRequested:
-    request: ToolApprovalRequest
-
-
-@dataclass(frozen=True, slots=True)
-class ToolApprovalCompleted:
-    call: ToolCallContent
-    approved: bool
-
-
 AgentEvent = (
     AgentStarted
     | AgentEnded
@@ -113,6 +101,4 @@ AgentEvent = (
     | ToolUpdated
     | ToolCompleted
     | ContextCompacted
-    | ToolApprovalRequested
-    | ToolApprovalCompleted
 )

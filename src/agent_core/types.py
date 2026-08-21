@@ -17,7 +17,6 @@ class ToolExecutionResult:
 
 # 进度回调
 ProgressSink = Callable[[str], None]  # 收到一行文本，返回None
-ToolApprovalResult = tuple[bool, str]
 
 
 class AgentTool(Protocol):
@@ -30,7 +29,6 @@ class AgentTool(Protocol):
 
     name: str
     description: str
-    is_safe: bool
 
     async def execute(
         self,
@@ -38,12 +36,3 @@ class AgentTool(Protocol):
         cancel: asyncio.Event,
         on_progress: ProgressSink | None = None,
     ) -> ToolExecutionResult: ...
-
-
-# agent core发给业务层的数据
-@dataclass(frozen=True, slots=True)
-class ToolApprovalRequest:
-    tool_name: str
-    tool_description: str
-    call: ToolCallContent
-    request_id: str

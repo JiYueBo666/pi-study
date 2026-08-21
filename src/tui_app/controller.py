@@ -28,18 +28,24 @@ class TuiController:
         self.workspace = workspace
         self._session_factory = session_factory
         self._handler = None
-        self._unsubscribe = None
+        self._agent_unsubscribe = None
+        self._coding_unsubscribe = None
 
     def subscribe(self, handler) -> None:
-        """订阅当前 Agent 事件；切换会话后会自动重新订阅。"""
+        """订阅当前 Agent 与 Coding 事件；切换会话后自动重连。"""
         self._handler = handler
         self._resubscribe()
 
     def _resubscribe(self) -> None:
-        if self._unsubscribe is not None:
-            self._unsubscribe()
+        if self._agent_unsubscribe is not None:
+            self._agent_unsubscribe()
+            self._agent_unsubscribe = None
+        if self._coding_unsubscribe is not None:
+            self._coding_unsubscribe()
+            self._coding_unsubscribe = None
         if self._handler is not None:
-            self._unsubscribe = self.session.agent.subscribe(self._handler)
+            self._agent_unsubscribe = self.session.agent.subscribe(self._handler)
+            self._coding_unsubscribe = self.session.subscribe(self._handler)
 
     async def run_prompt(self, text: str) -> str:
         """执行任务并持久化当前历史，保持与 CLI 相同的保存语义。"""

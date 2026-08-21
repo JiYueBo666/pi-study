@@ -8,13 +8,12 @@
 
 ## 决策
 
-- `AgentTool` 协议增加 `is_safe: bool`；`is_safe=True` 的工具默认直接执行。
 - `agent_core` 定义：
-  - `ToolApprovalRequest`：工具名、说明、调用参数、`request_id`
-  - `ToolApprovalResult`：`(approved, intent)`
-  - `before_tool_call_hook`：由业务层注入的审批钩子
-  - `ToolApprovalRequested` / `ToolApprovalCompleted` 事件
-- `coding_agent` 提供审批钩子：
+  - `BeforeToolCallHook`：由业务层注入的通用工具前置钩子
+  - hook 返回 `None` 时执行工具，返回 `ToolExecutionResult` 时跳过工具并使用该结果
+- `coding_agent` 拥有完整审批业务：
+  - `ToolBase.is_safe` 定义 Coding 工具的安全性
+  - `ToolApprovalRequest` / `ToolApprovalResult` 和审批事件均定义在 Coding 层
   - `ApprovalMode.ASK`：不安全工具等待用户 y/n
   - `ApprovalMode.AutoAccept`：自动放行
   - `RejectResponse` 与 `custom.toml` 定义拒绝后的返回文本
@@ -27,7 +26,7 @@
 ## 后果
 
 - 危险工具调用前有明确人工确认点。
-- `agent_core` 保持通用：审批钩子由业务层实现。
+- `agent_core` 保持通用：替换 Coding 业务时无需修改 loop。
 - UI（CLI/TUI）可以通过事件感知审批状态。
 - 取消会话时必须取消未决审批 Future，避免悬挂。
 

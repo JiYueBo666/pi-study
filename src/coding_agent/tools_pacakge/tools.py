@@ -9,7 +9,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from agent_core.types import AgentTool, ProgressSink, ToolExecutionResult
+from agent_core.types import ProgressSink, ToolExecutionResult
 from ai.types import ToolCallContent
 from ai.utils.validations import ToolArgumentsValidationError, validate_arguments
 from coding_agent.tools_pacakge.tool_args import (
@@ -389,7 +389,7 @@ async def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
             pass
 
 
-def build_tools(workspace: Workspace) -> list[AgentTool]:
+def build_tools(workspace: Workspace) -> list[ToolBase]:
     """组装 coding_agent 全部工具。"""
 
     return [

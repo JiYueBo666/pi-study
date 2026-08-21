@@ -172,6 +172,42 @@ def test_unknown_tool_returns_error_result() -> None:
     assert result == "继续"
 
 
+def test_before_tool_call_hook_can_override_execution() -> None:
+    class MustNotExecuteTool(AgentTool):
+        name = "blocked"
+        description = ""
+
+        async def execute(self, call, cancel, on_progress=None) -> ToolExecutionResult:
+            raise AssertionError("工具被覆盖后不应执行")
+
+    provider = FakeProvider(
+        [
+            _msg([_tool_call("blocked")], "toolUse"),
+            _msg([TextContent(text="继续")]),
+        ]
+    )
+    emit = NoopEmit()
+
+    async def before_tool_call(tool, call) -> ToolExecutionResult:
+        return ToolExecutionResult(content="blocked by business", is_error=True)
+
+    async def run() -> str:
+        return await run_loop(
+            provider=provider,
+            model=MODEL,
+            system_prompt=None,
+            user_prompt="hi",
+            emit=emit,
+            tools=[MustNotExecuteTool()],
+            history=(),
+            before_tool_call_hook=before_tool_call,
+        )
+
+    assert asyncio.run(run()) == "继续"
+    assert "ToolStarted" not in emit.events
+    assert "ToolCompleted" in emit.events
+
+
 class ProgressTool(AgentTool):
     name = "progress"
     description = ""

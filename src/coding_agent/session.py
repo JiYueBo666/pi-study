@@ -1,6 +1,8 @@
 """coding_agent.session — CodingSession：组装 Coding 产品。"""
 
 import asyncio
+import inspect
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -9,7 +11,15 @@ from agent_core.agent import Agent
 from agent_core.compaction import CompactionSettings
 from agent_core.session.jsonl import JsonlSessionStore
 from agent_core.session.types import SessionMeta, SessionStore
-from agent_core.types import ToolApprovalRequest, ToolApprovalResult
+from agent_core.types import AgentTool, ToolExecutionResult
+from ai.types import ToolCallContent
+from coding_agent.event import (
+    CodingEvent,
+    ToolApprovalCompleted,
+    ToolApprovalRequest,
+    ToolApprovalRequested,
+    ToolApprovalResult,
+)
 from coding_agent.prompt import SYSTEM_PROMPT
 from coding_agent.tools_pacakge.tool_config import (
     ApprovalMode,
@@ -18,6 +28,8 @@ from coding_agent.tools_pacakge.tool_config import (
 )
 from coding_agent.tools_pacakge.tools import build_tools
 from coding_agent.workspace import WorkSpace as Workspace
+
+type CodingEventListener = Callable[[CodingEvent], Awaitable[None] | None]
 
 
 class CodingSession:
@@ -55,6 +67,8 @@ class CodingSession:
             str,
             asyncio.Future[ToolApprovalResult],
         ] = {}
+        # 监听器
+        self._listeners: set[CodingEventListener] = set()
 
         self.agent = Agent(
             provider=provider,
@@ -64,8 +78,24 @@ class CodingSession:
             max_turns=self.max_turns,
             history=history,
             compaction_settings=self.compaction_settings,
-            beforeToolcallHook=self._before_tool_call,
+            before_tool_call_hook=self._before_tool_call,
         )
+
+    def subscribe(self, listener: CodingEventListener) -> Callable[[], None]:
+        """订阅 Coding 业务事件，并返回退订函数。"""
+        self._listeners.add(listener)
+
+        def unsubscribe() -> None:
+            self._listeners.discard(listener)
+
+        return unsubscribe
+
+    async def _emit(self, event: CodingEvent) -> None:
+        """逐个派发业务事件，兼容同步和异步监听器。"""
+        for listener in tuple(self._listeners):
+            result = listener(event)
+            if inspect.isawaitable(result):
+                await result
 
     async def prompt(self, user_input: str) -> str:
         """把用户输入交给 Agent 执行一个完整轮次。"""
@@ -109,19 +139,48 @@ class CodingSession:
 
     async def tool_approval_hook(
         self,
-        request: ToolApprovalRequest,
-    ) -> ToolApprovalResult:
-        tool = next(t for t in self.tools if t.name == request.tool_name)
-        if tool.is_safe:
-            return True, "safe"
-
+        tool: AgentTool,
+        call: ToolCallContent,
+    ) -> ToolExecutionResult | None:
+        tool_use = next(t for t in self.tools if t.name == tool.name)
+        if tool_use.is_safe:
+            return None
         if self.approval_mode is ApprovalMode.AutoAccept:
-            return True, "auto_accept"
+            return None
+        approved, intent = await self.request_approval(tool, call)
+
+        if approved:
+            return None
+        return ToolExecutionResult(
+            content=intent,
+            details={"approval_required": True, "approved": False},
+            is_error=True,
+        )
+
+    async def request_approval(
+        self,
+        tool: AgentTool,
+        call: ToolCallContent,
+    ) -> ToolApprovalResult:
+        # 创建请求ID，Future并登记
+        request_id = uuid4().hex
+
+        request = ToolApprovalRequest(
+            request_id=request_id,
+            tool_name=tool.name,
+            tool_description=tool.description,
+            call=call,
+        )
+
         future: asyncio.Future[ToolApprovalResult] = asyncio.get_running_loop().create_future()
-        self._pending_approvals[request.request_id] = future
+        self._pending_approvals[request_id] = future
 
         try:
-            return await future
+            await self._emit(ToolApprovalRequested(request=request))
+            result = await future
+
+            await self._emit(ToolApprovalCompleted(call=call, approved=result[0]))
+            return result
         finally:
             self._pending_approvals.pop(request.request_id, None)
 

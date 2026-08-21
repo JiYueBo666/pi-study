@@ -8,7 +8,6 @@ import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
-from uuid import uuid4
 
 from agent_core.events import (
     AgentEnded,
@@ -19,20 +18,13 @@ from agent_core.events import (
     MessageDelta,
     MessageStarted,
     ThinkingDeltaEvent,
-    ToolApprovalCompleted,
-    ToolApprovalRequested,
     ToolCompleted,
     ToolStarted,
     ToolUpdated,
     TurnEnded,
     TurnStarted,
 )
-from agent_core.types import (
-    AgentTool,
-    ToolApprovalRequest,
-    ToolApprovalResult,
-    ToolExecutionResult,
-)
+from agent_core.types import AgentTool, ToolExecutionResult
 from ai.types import (
     AssistantMessage,
     CompactionSummaryMessage,
@@ -53,10 +45,10 @@ from ai.types import (
 # 事件接收器：对应 pi 的 AgentEventSink（agent-loop.ts:47）
 EventSink = Callable[[AgentEvent], Awaitable[None]]
 
-# 审批钩子,传入请求，获取是否允许执行
-ToolApprovalHook = Callable[
-    [ToolApprovalRequest],
-    Awaitable[ToolApprovalResult],
+# 工具执行前钩子：None 表示继续执行，结果对象表示跳过执行并使用该结果。
+BeforeToolCallHook = Callable[
+    [AgentTool, ToolCallContent],
+    Awaitable[ToolExecutionResult | None],
 ]
 
 
@@ -72,7 +64,7 @@ async def run_loop(
     cancel: asyncio.Event | None = None,
     history: Sequence[Message] | None,
     compactor: Callable[[list[Message]], Awaitable[list[Message]]] | None = None,
-    before_tool_call_hook: ToolApprovalHook | None = None,
+    before_tool_call_hook: BeforeToolCallHook | None = None,
 ):
     # Trace开始
     await emit(AgentStarted())
@@ -166,64 +158,22 @@ async def run_loop(
                     exec_result = ToolExecutionResult(
                         content=f"未知工具:{call.name}", is_error=True
                     )
-                # 找到工具，构造请求进行审批。 is_safe的默认通过由业务层确认。
+                # 找到工具，先让业务层有机会放行或覆盖执行结果。
                 else:
-                    # 有审批钩子，构造参数进行
-                    if before_tool_call_hook:
-                        request = ToolApprovalRequest(
-                            tool_name=tool.name,
-                            tool_description=tool.description,
-                            call=call,
-                            request_id=uuid4().hex,
-                        )
-                        approval_task = asyncio.ensure_future(
-                            before_tool_call_hook(request)
-                        )
-                        approval_requested = False
-                        try:
-                            # 让 hook 先完成 pending Future 的登记，再通知 UI。
-                            await asyncio.sleep(0)
-                            if not approval_task.done():
-                                approval_requested = True
-                                await emit(ToolApprovalRequested(request))
-                            approved, intent = await approval_task
-                        except BaseException:
-                            if not approval_task.done():
-                                approval_task.cancel()
-                            await asyncio.gather(
-                                approval_task,
-                                return_exceptions=True,
-                            )
-                            raise
-                        if approval_requested:
-                            await emit(
-                                ToolApprovalCompleted(
-                                    call=call,
-                                    approved=approved,
-                                )
-                            )
-                        if approved:
-                            await emit(ToolStarted(call))
-                            exec_result = await _execute_tool_with_progress(
-                                tool, call, cancel or asyncio.Event(), emit
-                            )
-                        else:
-                            exec_result = ToolExecutionResult(
-                                content=intent,
-                                details={
-                                    "approval_required": True,
-                                    "approved": False,
-                                    "request_id": request.request_id,
-                                },
-                                is_error=True,
-                            )
-                    # 否则直接执行
-                    else:
+                    override_result: ToolExecutionResult | None = None
+                    if before_tool_call_hook is not None:
+                        override_result = await before_tool_call_hook(tool, call)
+
+                    if override_result is None:
                         await emit(ToolStarted(call))
                         exec_result = await _execute_tool_with_progress(
-                            tool, call, cancel or asyncio.Event(), emit
+                            tool,
+                            call,
+                            cancel or asyncio.Event(),
+                            emit,
                         )
-
+                    else:
+                        exec_result = override_result
                 # 结果转成 ToolResult 消息（ai.types 里已有，role="toolResult"）
                 result_msg = ToolResult(
                     toolCallId=call.id,
