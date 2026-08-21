@@ -108,6 +108,54 @@ class MyPiApp(TuiApp):
         color: $text;
         text-style: bold;
     }
+    ToolResultView {
+        width: 100%;
+        height: auto;
+        margin: 0 0 1 0;
+        padding: 0 1 1 1;
+        border-left: solid $secondary;
+        background: $panel;
+    }
+    ToolResultView.error {
+        border-left: solid $error;
+    }
+    .tool-result-header {
+        height: 1;
+        margin: 0 0 1 0;
+        color: $success;
+        text-style: bold;
+    }
+    ToolResultView.error .tool-result-header {
+        color: $error;
+    }
+    .tool-result-label {
+        height: 1;
+        margin: 1 0 0 0;
+        color: $text-muted;
+        text-style: bold;
+    }
+    .tool-result-command, .tool-result-output {
+        width: 100%;
+        height: auto;
+        background: $surface;
+    }
+    .tool-result-exit {
+        height: 1;
+        margin: 1 0 0 0;
+        color: $text-muted;
+    }
+    .tool-result-path {
+        height: 1;
+        color: $text-muted;
+    }
+    .tool-result-collapsible {
+        width: 100%;
+        height: auto;
+        margin: 1 0 0 0;
+        padding: 0;
+        background: $surface;
+        border-top: solid $primary-darken-2;
+    }
     #composer {
         height: auto;
         padding: 0 0 1 0;
@@ -410,7 +458,6 @@ class MyPiApp(TuiApp):
             status.update("生成中")
         elif isinstance(event, ToolStarted):
             self._finish_stream()
-            log.add_message(f"运行工具  {event.call.name}({event.call.arguments})", role="tool")
             status.update(f"运行中 · {event.call.name}")
         elif isinstance(event, ToolUpdated):
             status.update(f"运行中 · {event.partial or event.call.name}")
@@ -422,8 +469,6 @@ class MyPiApp(TuiApp):
             status.update("已批准" if event.approved else "已拒绝")
         elif isinstance(event, ToolCompleted):
             self._finish_stream()
-            mark = "✓" if not event.result.isError else "✗"
-            log.add_message(f"{mark}  工具 {event.call.name}", role="tool")
             status.update("处理中")
         elif isinstance(event, MessageCompleted):
             self._finish_stream()
@@ -438,6 +483,16 @@ class MyPiApp(TuiApp):
             log.add_message(f"任务 {event.status}", role="system")
 
     def _render_message(self, log: MessageList, message, *, include_user: bool = False) -> None:
+        if isinstance(message, ToolResult):
+            content = "".join(b.text for b in message.content if isinstance(b, TextContent))
+            log.add_tool_result(
+                tool_name=message.toolName,
+                content=content,
+                details=message.details,
+                is_error=message.isError,
+            )
+            return
+
         text = self._message_text(message, include_user=include_user)
         if text:
             role = self._message_role(message, include_user=include_user)
@@ -449,9 +504,6 @@ class MyPiApp(TuiApp):
         if isinstance(message, AssistantMessage):
             text = "".join(b.text for b in message.content if isinstance(b, TextContent))
             return text or None
-        if isinstance(message, ToolResult):
-            content = "".join(b.text for b in message.content if isinstance(b, TextContent))
-            return f"{message.toolName}: {content[:200]}"
         if isinstance(message, CompactionSummaryMessage):
             return f"[上下文摘要] {message.summary[:200]}"
         return None
@@ -461,8 +513,6 @@ class MyPiApp(TuiApp):
             return "user" if include_user else "system"
         if isinstance(message, AssistantMessage):
             return "assistant"
-        if isinstance(message, ToolResult):
-            return "tool"
         if isinstance(message, CompactionSummaryMessage):
             return "thinking"
         return "system"

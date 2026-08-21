@@ -5,6 +5,6 @@
 """
 
 from tui.app import TuiApp
-from tui.widgets import CommandInput, MessageList, MessageLog
+from tui.widgets import CommandInput, MessageList, MessageLog, ToolResultView
 
-__all__ = ["TuiApp", "CommandInput", "MessageList", "MessageLog"]
+__all__ = ["TuiApp", "CommandInput", "MessageList", "MessageLog", "ToolResultView"]
