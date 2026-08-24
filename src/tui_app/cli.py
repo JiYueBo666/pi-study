@@ -37,7 +37,7 @@ def main() -> None:
         created_at=None,
     ) -> CodingSession:
         return CodingSession(
-            provider=ProviderAdapter(client, model),
+            provider=ProviderAdapter(client),
             model=model,
             root=workspace,
             session_id=session_id,

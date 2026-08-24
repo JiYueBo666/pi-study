@@ -8,11 +8,11 @@ from pathlib import Path
 from uuid import uuid4
 
 from agent_core.agent import Agent
-from agent_core.compaction import CompactionSettings
+from agent_core.compaction import CompactionSettings, estimate_tokens
 from agent_core.session.jsonl import JsonlSessionStore
 from agent_core.session.types import SessionMeta, SessionStore
 from agent_core.types import AgentTool, ToolExecutionResult
-from ai.types import ToolCallContent
+from ai.types import ModelConfig, ToolCallContent
 from coding_agent.event import (
     CodingEvent,
     ToolApprovalCompleted,
@@ -118,6 +118,51 @@ class CodingSession:
     @property
     def messages(self):
         return self.agent.messages
+
+    def steer(self, content: str) -> bool:
+        """将运行中的用户消息转发给 Agent 的下一轮队列。"""
+        return self.agent.steer(content)
+
+    @property
+    def model(self) -> ModelConfig:
+        return self.agent.model
+
+    def set_model(self, model_id: str) -> ModelConfig:
+        """切换后续调用使用的模型，同时保留当前 provider 与 API 类型。"""
+        model_id = model_id.strip()
+        if not model_id:
+            raise ValueError("模型 ID 不能为空")
+
+        current = self.model
+        model = ModelConfig(
+            id=model_id,
+            provider=current.provider,
+            api=current.api,
+        )
+        self.agent.set_model(model)
+        return model
+
+    def status(self) -> dict:
+        """返回与 UI 无关的会话和上下文统计。"""
+        messages = self.messages
+        role_counts: dict[str, int] = {}
+        for message in messages:
+            role_counts[message.role] = role_counts.get(message.role, 0) + 1
+
+        estimated_tokens = sum(estimate_tokens(message) for message in messages)
+        threshold = self.compaction_settings.max_context_tokens - self.compaction_settings.reserve_tokens
+        return {
+            "session_id": self.session_id,
+            "workspace": str(self.workspace.root),
+            "model": self.model.id,
+            "message_count": len(messages),
+            "role_counts": role_counts,
+            "estimated_tokens": estimated_tokens,
+            "compaction_threshold": threshold,
+            "compaction_enabled": self.compaction_settings.enabled,
+            "pending_approvals": len(self._pending_approvals),
+            "approval_mode": self.approval_mode.value,
+        }
 
     def save(
         self,

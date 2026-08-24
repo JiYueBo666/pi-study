@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 from agent_core.session.types import SessionError, SessionMeta
 from coding_agent.commands import CommandContext, CommandRegistry, register_builtin_commands
@@ -51,9 +52,17 @@ def test_complete_returns_canonical_name() -> None:
 
     assert registry.complete("/q") == ["quit"]
     assert registry.complete("/ex") == ["quit"]
-    assert registry.complete("/c") == ["compact"]
-    assert registry.complete("/s") == ["session"]
-    assert registry.complete("/") == ["compact", "quit", "session"]
+    assert registry.complete("/c") == ["clear", "compact"]
+    assert registry.complete("/s") == ["session", "status"]
+    assert registry.complete("/") == [
+        "clear",
+        "compact",
+        "help",
+        "model",
+        "quit",
+        "session",
+        "status",
+    ]
 
 
 def test_complete_no_match_returns_empty() -> None:
@@ -88,6 +97,96 @@ def test_compact_alias_works() -> None:
     result = asyncio.run(registry.execute("/c", CommandContext(session=FakeSession())))
 
     assert result.message == "已压缩"
+
+
+def test_help_lists_every_canonical_command() -> None:
+    registry = CommandRegistry()
+    register_builtin_commands(registry)
+
+    result = asyncio.run(registry.execute("/help", CommandContext(session=None)))
+
+    assert result.status == "ok"
+    assert result.message is not None
+    for name in registry.command_names():
+        assert f"/{name}" in result.message
+
+
+def test_clear_returns_ui_action_without_touching_session() -> None:
+    session = object()
+    registry = CommandRegistry()
+    register_builtin_commands(registry)
+
+    result = asyncio.run(registry.execute("/clear", CommandContext(session=session)))
+
+    assert result.data == {"action": "clear"}
+
+
+def test_clear_rejects_arguments() -> None:
+    registry = CommandRegistry()
+    register_builtin_commands(registry)
+
+    result = asyncio.run(registry.execute("/clear now", CommandContext(session=None)))
+
+    assert result.status == "error"
+    assert result.message == "usage: /clear"
+
+
+def test_model_reports_and_switches_current_model() -> None:
+    class FakeSession:
+        model = SimpleNamespace(id="old-model")
+
+        def set_model(self, model_id: str):
+            self.model = SimpleNamespace(id=model_id)
+            return self.model
+
+    session = FakeSession()
+    registry = CommandRegistry()
+    register_builtin_commands(registry)
+
+    current = asyncio.run(registry.execute("/model", CommandContext(session=session)))
+    changed = asyncio.run(registry.execute("/model new-model", CommandContext(session=session)))
+
+    assert current.message == "当前模型: old-model"
+    assert changed.data == {"action": "model_changed", "model": "new-model"}
+    assert session.model.id == "new-model"
+
+
+def test_model_rejects_extra_arguments() -> None:
+    registry = CommandRegistry()
+    register_builtin_commands(registry)
+
+    result = asyncio.run(registry.execute("/model one two", CommandContext(session=object())))
+
+    assert result.status == "error"
+    assert result.message == "usage: /model [model_id]"
+
+
+def test_status_formats_session_statistics() -> None:
+    class FakeSession:
+        def status(self) -> dict:
+            return {
+                "session_id": "sess_abc",
+                "workspace": "/tmp/project",
+                "model": "test-model",
+                "message_count": 3,
+                "role_counts": {"user": 2, "assistant": 1},
+                "estimated_tokens": 42,
+                "compaction_threshold": 112_000,
+                "compaction_enabled": True,
+                "pending_approvals": 0,
+                "approval_mode": "ask",
+            }
+
+    registry = CommandRegistry()
+    register_builtin_commands(registry)
+
+    result = asyncio.run(registry.execute("/status", CommandContext(session=FakeSession())))
+
+    assert result.message is not None
+    assert "会话: sess_abc" in result.message
+    assert "模型: test-model" in result.message
+    assert "约 42 tokens" in result.message
+    assert result.data["action"] == "status"
 
 
 class _FakeStore:

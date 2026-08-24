@@ -38,6 +38,8 @@ coding_agent 不导入 tui；CLI 完全不变
 - 载入会话后显示完整历史对话
 - 思考流（`ThinkingDeltaEvent`）与工具进度（`ToolUpdated`）实时显示在状态行
 - 工具审批：不安全工具调用时弹出高亮审批框，输入 `y` / `n` 决定是否执行
+- `/help` 显示命令，`/clear` 只清空当前消息区
+- `/model [model_id]` 查看或切换模型，`/status` 显示会话与上下文统计
 - `/quit` 退出、`/compact` 手动压缩
 
 ## 与 CLI 的关系
@@ -56,5 +58,5 @@ coding_agent 不导入 tui；CLI 完全不变
 - [x] `/session` 会话选择弹窗（载入/删除）
 - [x] 思考流与工具进度状态行
 - [x] 工具审批 y/n 对接
-- [ ] 会话恢复后的模型切换 / 更多命令
+- [x] 会话恢复后的模型切换与 `/help`、`/clear`、`/status`
 - [ ] 富渲染（工具输出、代码块、图片）

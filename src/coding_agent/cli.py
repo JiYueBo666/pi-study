@@ -194,7 +194,7 @@ async def async_main() -> int:
 
     try:
         session = CodingSession(
-            provider=ProviderAdapter(client, model),
+            provider=ProviderAdapter(client),
             model=model,
             root=workspace,
             max_turns=args.max_turns,
@@ -233,6 +233,8 @@ async def async_main() -> int:
 
             if user_input.startswith("/"):
                 result = await registry.execute(user_input, command_context)
+                if result.data and result.data.get("action") == "clear":
+                    print("\033[2J\033[H", end="")
                 if result.message:
                     print(result.message)
                 if result.should_exit:

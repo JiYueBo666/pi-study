@@ -15,6 +15,52 @@ async def _compact(context: CommandContext, args: list[str]) -> CommandResult:
     return CommandResult(message=summary)
 
 
+async def _clear(context: CommandContext, args: list[str]) -> CommandResult:
+    if args:
+        return CommandResult(message="usage: /clear", status="error")
+    return CommandResult(data={"action": "clear"})
+
+
+async def _model(context: CommandContext, args: list[str]) -> CommandResult:
+    if context.session is None:
+        return CommandResult(message="当前没有会话", status="error")
+    if len(args) > 1:
+        return CommandResult(message="usage: /model [model_id]", status="error")
+    if not args:
+        return CommandResult(message=f"当前模型: {context.session.model.id}")
+
+    try:
+        model = context.session.set_model(args[0])
+    except ValueError as exc:
+        return CommandResult(message=str(exc), status="error")
+    return CommandResult(
+        message=f"已切换模型: {model.id}",
+        data={"action": "model_changed", "model": model.id},
+    )
+
+
+async def _status(context: CommandContext, args: list[str]) -> CommandResult:
+    if context.session is None:
+        return CommandResult(message="当前没有会话", status="error")
+    if args:
+        return CommandResult(message="usage: /status", status="error")
+
+    status = context.session.status()
+    role_counts = status["role_counts"]
+    role_text = ", ".join(f"{role}={count}" for role, count in sorted(role_counts.items())) or "无"
+    session_id = status["session_id"] or "新会话"
+    compaction = "开启" if status["compaction_enabled"] else "关闭"
+    lines = [
+        f"会话: {session_id}",
+        f"模型: {status['model']}",
+        f"工作区: {status['workspace']}",
+        f"消息: {status['message_count']} ({role_text})",
+        (f"上下文: 约 {status['estimated_tokens']} tokens / {status['compaction_threshold']} 压缩阈值 ({compaction})"),
+        f"审批: {status['approval_mode']}，待处理 {status['pending_approvals']}",
+    ]
+    return CommandResult(message="\n".join(lines), data={"action": "status", **status})
+
+
 async def _session(context: CommandContext, args: list[str]) -> CommandResult:
     """列出 / 载入 / 删除会话。
 
@@ -65,6 +111,50 @@ async def _session(context: CommandContext, args: list[str]) -> CommandResult:
 def register_builtin_commands(registry: CommandRegistry) -> None:
     """注册全部内置命令。"""
 
+    async def help_command(
+        context: CommandContext,
+        args: list[str],
+    ) -> CommandResult:
+        if args:
+            return CommandResult(message="usage: /help", status="error")
+        lines = []
+        for command in registry.commands():
+            usage = command.usage or f"/{command.name}"
+            aliases = f" (别名: {', '.join('/' + alias for alias in command.aliases)})" if command.aliases else ""
+            lines.append(f"{usage:<28} {command.description}{aliases}")
+        return CommandResult(message="\n".join(lines), data={"action": "help"})
+
+    registry.register(
+        Command(
+            name="help",
+            description="显示所有命令",
+            handler=help_command,
+            aliases=("h",),
+        )
+    )
+    registry.register(
+        Command(
+            name="clear",
+            description="清空当前消息区（不删除会话历史）",
+            handler=_clear,
+        )
+    )
+    registry.register(
+        Command(
+            name="model",
+            description="查看或切换当前模型",
+            handler=_model,
+            usage="/model [model_id]",
+        )
+    )
+    registry.register(
+        Command(
+            name="status",
+            description="查看会话与上下文统计",
+            handler=_status,
+        )
+    )
+
     registry.register(
         Command(
             name="quit",
@@ -87,5 +177,6 @@ def register_builtin_commands(registry: CommandRegistry) -> None:
             description="列出 / 载入 / 删除会话",
             handler=_session,
             aliases=("sessions",),
+            usage="/session [id|delete <id>]",
         )
     )

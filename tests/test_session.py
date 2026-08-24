@@ -26,9 +26,11 @@ class ScriptedProvider:
     def __init__(self, responses: list[AssistantMessage]) -> None:
         self.responses = list(responses)
         self.sent: list = []
+        self.models: list[str] = []
 
     async def stream(self, context):
         self.sent.append([m.role for m in context.messages])
+        self.models.append(context.model.id)
         yield StreamCompleted(message=self.responses.pop(0))
 
 
@@ -79,6 +81,34 @@ def test_session_events_observable(tmp_path: Path) -> None:
     session.agent.subscribe(sink)
     asyncio.run(session.prompt("hi"))
     assert "AgentStarted" in events and "AgentEnded" in events
+
+
+def test_session_switches_model_for_next_provider_call(tmp_path: Path) -> None:
+    provider = ScriptedProvider([_msg([TextContent(text="回答")])])
+    session = CodingSession(provider=provider, model=MODEL, root=tmp_path)
+
+    selected = session.set_model("new-model")
+    result = asyncio.run(session.prompt("hi"))
+
+    assert selected.id == "new-model"
+    assert session.model.id == "new-model"
+    assert provider.models == ["new-model"]
+    assert result == "回答"
+
+
+def test_session_status_reports_context_without_mutating_history(tmp_path: Path) -> None:
+    provider = ScriptedProvider([_msg([TextContent(text="回答")])])
+    session = CodingSession(provider=provider, model=MODEL, root=tmp_path)
+    asyncio.run(session.prompt("hello"))
+
+    before = session.messages
+    status = session.status()
+
+    assert status["model"] == "fake"
+    assert status["message_count"] == 2
+    assert status["role_counts"] == {"user": 1, "assistant": 1}
+    assert status["estimated_tokens"] > 0
+    assert session.messages == before
 
 
 def test_session_approval_waits_and_resolves_from_business_layer(tmp_path: Path) -> None:

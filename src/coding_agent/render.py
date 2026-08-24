@@ -10,6 +10,7 @@ from agent_core.events import (
     AgentEnded,
     ContextCompacted,
     MessageDelta,
+    SteeringQueued,
     ThinkingDeltaEvent,
     ToolCompleted,
     ToolStarted,
@@ -66,6 +67,8 @@ class TerminalRenderer:
             self._on_tool_updated(event)
         elif isinstance(event, ContextCompacted):
             self._on_compacted(event)
+        elif isinstance(event, SteeringQueued):
+            self._on_steering(event)
         # 其余事件：v0 不渲染
 
     def _print(self, text: str = "", *, end: str = "\n") -> None:
@@ -119,6 +122,8 @@ class TerminalRenderer:
         self._break_stream()
         label, code = _ENDED_LABELS.get(event.status, (event.status, DIM))
         self._print(self._paint(label, code))
+        if event.error:
+            self._print(self._paint(f"  {event.error}", RED))
 
     def _on_tool_updated(self, event: ToolUpdated):
         self._print(self._paint(f"  │ {event.partial}", DIM))
@@ -126,6 +131,16 @@ class TerminalRenderer:
     def _on_compacted(self, event: ContextCompacted) -> None:
         self._break_stream()
         self._print(self._paint(f"  [上下文已压缩 · 保留 {event.retained_count} 条最近消息]", DIM))
+
+    def _on_steering(self, event: SteeringQueued) -> None:
+        self._break_stream()
+        for message in event.messages:
+            self._print(
+                self._paint(
+                    f"↳ steering · 下一轮 {event.turn + 1}: {message.content}",
+                    YELLOW,
+                )
+            )
 
 
 def _first_line(text: str) -> str:

@@ -18,12 +18,10 @@ coding-agent自定义消息
    没有"对 UI 可见但对 LLM 不可见"的余地。
 """
 
-from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
-from agent_core.types import AgentMessage
-from ai.types import AssistantMessage, Message, ToolResult, UserMessage
+from ai.types import Message
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,24 +59,3 @@ def bash_execution_to_text(msg: BashExecutionMessage) -> str:
     if msg.truncated and msg.fullOutputPath:
         text += f"\n\n[Output truncated. Full output: {msg.fullOutputPath}]"
     return text
-
-
-def convert_to_llm(messages: Sequence[AgentMessage]) -> list[Message]:
-    """把会话消息翻译成模型可读的 Message 列表（对应 pi 的 convertToLlm）。
-
-    在 agent loop 的 LLM 调用边界调用一次：
-    - user / assistant / toolResult 原样透传；
-    - bashExecution 转成 user 文本；excludedFromContext=True 时丢弃；
-    - 未知消息丢弃而非抛错，避免不认识的产品消息中断 loop。
-    保持输入顺序——消息顺序即因果顺序。
-    """
-    converted: list[Message] = []
-    for m in messages:
-        if isinstance(m, BashExecutionMessage):
-            if m.excludedFromContext:
-                continue
-            converted.append(UserMessage(content=bash_execution_to_text(m), timestamp=m.timestamp))
-        elif isinstance(m, (UserMessage, AssistantMessage, ToolResult)):
-            converted.append(m)
-        # 未知消息：丢弃，loop 不因此中断
-    return converted

@@ -10,6 +10,7 @@ from agent_core.events import (
     ContextCompacted,
     MessageCompleted,
     MessageDelta,
+    SteeringQueued,
     ThinkingDeltaEvent,
     ToolCompleted,
     ToolStarted,
@@ -110,6 +111,18 @@ class MyPiApp(TuiApp):
         color: $text;
         text-style: bold;
     }
+    .message.steering {
+        border: solid $warning;
+        border-left: wide $warning;
+        background: $surface;
+        color: $warning;
+        text-style: bold;
+    }
+    .message.error {
+        border-left: wide $error;
+        background: $surface;
+        color: $error;
+    }
     ToolResultView {
         width: 100%;
         height: auto;
@@ -207,6 +220,7 @@ class MyPiApp(TuiApp):
         self._stream_kind: str | None = None
         self._stream_partial = ""
         self._pending_approval: ToolApprovalRequest | None = None
+        self._agent_running = False
 
     def compose(self) -> ComposeResult:
         with Vertical(id="app-shell"):
@@ -252,8 +266,16 @@ class MyPiApp(TuiApp):
             return
 
         self.query_one("#command-palette", OptionList).display = False
+        if self._agent_running:
+            if self.controller.steer(text):
+                self._set_status("已加入下一轮")
+            else:
+                self.query_one(MessageList).add_message("插队队列已满，请等待当前任务继续", role="system")
+            return
+
         self.query_one(MessageList).add_message(text, role="user")
         self._set_status("处理中")
+        self._agent_running = True
         self.run_worker(self._run_prompt(text), exclusive=True, group="agent")
 
     # ---- 工具审批 ----
@@ -347,7 +369,11 @@ class MyPiApp(TuiApp):
             data = result.data or {}
             action = data.get("action")
             sessions = data.get("sessions") or []
-            if result.message and action not in {"list", "deleted"}:
+            if action == "clear":
+                self._finish_stream()
+                log.clear_messages()
+                self._set_status("消息区已清空")
+            elif result.message and action not in {"list", "deleted"}:
                 log.add_message(result.message, role="system")
             if action == "list":
                 if sessions:
@@ -358,6 +384,8 @@ class MyPiApp(TuiApp):
                 await self._load_session(data["session_id"])
             elif action == "deleted":
                 log.add_message("会话已删除", role="system")
+            elif action == "model_changed":
+                self._refresh_session_meta()
 
             if result.should_exit:
                 self.exit()
@@ -366,12 +394,12 @@ class MyPiApp(TuiApp):
 
     async def _run_prompt(self, text: str) -> None:
         input_widget = self.query_one(CommandInput)
-        input_widget.disabled = True
         try:
             await self.controller.run_prompt(text)
         except Exception as exc:
             self.query_one(MessageList).add_message(f"错误: {exc}", role="system")
         finally:
+            self._agent_running = False
             input_widget.disabled = False
             input_widget.focus()
             self._refresh_session_meta()
@@ -414,8 +442,9 @@ class MyPiApp(TuiApp):
 
     def _refresh_session_meta(self) -> None:
         session_id = self.controller.session.session_id or "新会话"
+        model_id = self.controller.session.model.id
         workspace = self.controller.workspace.name or str(self.controller.workspace)
-        self.query_one("#session-meta", Static).update(f"{workspace}  ·  {session_id}")
+        self.query_one("#session-meta", Static).update(f"{workspace}  ·  {session_id}  ·  {model_id}")
 
     def _set_status(self, value: str) -> None:
         self.query_one("#status", Static).update(value)
@@ -452,6 +481,14 @@ class MyPiApp(TuiApp):
         if isinstance(event, TurnStarted):
             self._finish_stream()
             log.add_message(f"轮次 {event.turn}", role="system")
+        elif isinstance(event, SteeringQueued):
+            self._finish_stream()
+            for message in event.messages:
+                log.add_message(
+                    f"插队消息 · 下一轮 {event.turn + 1}\n{message.content}",
+                    role="steering",
+                )
+            status.update(f"已插入下一轮 · {len(event.messages)} 条消息")
         elif isinstance(event, ThinkingDeltaEvent):
             self._stream(event.partial, kind="thinking")
             status.update("思考中")
@@ -481,8 +518,16 @@ class MyPiApp(TuiApp):
             log.add_message(f"[上下文已压缩 · 保留 {event.retained_count} 条最近消息]", role="system")
         elif isinstance(event, AgentEnded):
             self._finish_stream()
-            status.update("就绪" if event.status == "completed" else event.status)
-            log.add_message(f"任务 {event.status}", role="system")
+            if event.error:
+                title = "模型调用失败" if event.status == "model_failed" else "Agent 内部错误"
+                status.update(title)
+                log.add_message(
+                    f"{title}\n{event.error}",
+                    role="error",
+                )
+            else:
+                status.update("就绪" if event.status == "completed" else event.status)
+                log.add_message(f"任务 {event.status}", role="system")
 
     def _render_message(self, log: MessageList, message, *, include_user: bool = False) -> None:
         if isinstance(message, ToolResult):

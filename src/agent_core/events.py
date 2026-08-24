@@ -8,7 +8,7 @@
 
 from dataclasses import dataclass
 
-from ai.types import Message, ToolCallContent, ToolResult
+from ai.types import Message, ToolCallContent, ToolResult, UserMessage
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +21,7 @@ class AgentEnded:
     """Agent 结束。status 是 03-contracts §2 的一种终态。"""
 
     status: str  # completed / cancelled / max_turns / model_failed / internal_error
+    error: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +89,12 @@ class ContextCompacted:
     retained_count: int
 
 
+@dataclass(frozen=True, slots=True)
+class SteeringQueued:
+    turn: int
+    messages: tuple[UserMessage, ...]
+
+
 AgentEvent = (
     AgentStarted
     | AgentEnded
@@ -101,4 +108,5 @@ AgentEvent = (
     | ToolUpdated
     | ToolCompleted
     | ContextCompacted
+    | SteeringQueued
 )

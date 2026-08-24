@@ -75,6 +75,19 @@ def test_renderer_ended_label(capsys) -> None:
     assert "✓ completed" in out
 
 
+def test_renderer_model_failure_includes_error_detail(capsys) -> None:
+    renderer = TerminalRenderer(color=False)
+    renderer(
+        AgentEnded(
+            status="model_failed",
+            error="AuthenticationError: invalid API key",
+        )
+    )
+    out = capsys.readouterr().out
+    assert "model_failed" in out
+    assert "AuthenticationError: invalid API key" in out
+
+
 def test_renderer_thinking_then_text(capsys) -> None:
     from agent_core.events import MessageDelta, ThinkingDeltaEvent
 

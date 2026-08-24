@@ -80,3 +80,8 @@ class CommandRegistry:
     def command_names(self) -> list[str]:
         """返回全部规范命令名（去重、排序），供 UI 补全使用。"""
         return sorted({command.name for command in self._commands.values()})
+
+    def commands(self) -> list[Command]:
+        """返回全部规范命令定义，供帮助界面使用。"""
+        unique = {command.name: command for command in self._commands.values()}
+        return [unique[name] for name in sorted(unique)]

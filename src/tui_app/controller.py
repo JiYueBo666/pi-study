@@ -61,13 +61,19 @@ class TuiController:
         """把用户的 y/n 决策交给 CodingSession 的审批钩子。"""
         return self.session.resolve_tool_approval(request_id, approved)
 
+    def steer(self, content: str) -> bool:
+        """将运行中的输入加入当前会话的下一轮消息队列。"""
+        return self.session.steer(content)
+
     async def load_session(self, session_id: str) -> None:
         meta, messages = self.session_store.load(session_id)
+        current_model_id = self.session.model.id
         self.session = self._session_factory(
             session_id=session_id,
             history=messages,
             created_at=meta.created_at,
         )
+        self.session.set_model(current_model_id)
         self.command_context = CommandContext(
             session=self.session,
             session_store=self.session_store,

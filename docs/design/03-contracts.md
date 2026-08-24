@@ -114,7 +114,7 @@ Agent 状态是可变的进程内运行状态：已配置模型、当前系统�
 completed      模型给出了最终 AssistantMessage
 cancelled      用户或调用者停止任务
 max_turns      到达配置的 Loop 上限
-model_failed   Provider 未能完成调用
+model_failed   Provider 未能完成调用，AgentEnded.error 保留可展示的失败详情
 internal_error 不变量或实现发生意外错误
 ```
 

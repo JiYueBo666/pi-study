@@ -162,3 +162,12 @@ def test_subscriber_sees_tool_result_message() -> None:
     agent.subscribe(listener)
     asyncio.run(agent.run("hi"))
     assert len(results) == 1 and results[0].content[0].text == "文件内容"
+
+
+def test_steering_messages_are_added_to_agent_history() -> None:
+    provider = FakeProvider([_msg([TextContent(text="第一轮")]), _msg([TextContent(text="完成")])])
+    agent = Agent(provider=provider, model=MODEL)
+    agent.steer("下一轮检查 session.py")
+
+    asyncio.run(agent.run("开始"))
+    assert any(getattr(message, "content", None) == "下一轮检查 session.py" for message in agent.messages)

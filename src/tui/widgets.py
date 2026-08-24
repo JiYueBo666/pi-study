@@ -161,7 +161,9 @@ class MessageList(VerticalScroll):
     """消息列表：按角色分层展示消息，保持流式输出稳定。"""
 
     def add_message(self, text: str, *, role: str = "system") -> None:
-        message = Static(text, classes=f"message {role}")
+        # 消息内容来自用户、模型或工具，不能默认交给 Rich markup 解析。
+        # 否则命令中的 ``[]``、反斜杠等字符可能触发 MarkupError。
+        message = Static(text, classes=f"message {role}", markup=False)
         self.mount(message)
         self.scroll_end(animate=False)
 

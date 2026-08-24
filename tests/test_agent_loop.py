@@ -5,6 +5,7 @@ from datetime import datetime
 
 import pytest
 
+from agent_core.events import AgentEnded, SteeringQueued
 from agent_core.loop import _execute_tool_with_progress, run_loop
 from agent_core.types import AgentTool, ToolExecutionResult
 from ai.types import (
@@ -14,6 +15,7 @@ from ai.types import (
     StreamFailed,
     TextContent,
     ToolCallContent,
+    UserMessage,
 )
 
 MODEL = ModelConfig(id="fake")
@@ -115,6 +117,45 @@ def test_tool_result_in_context_next_turn() -> None:
     assert provider.sent_contexts[1] == ["user", "assistant", "toolResult"]
 
 
+def test_steering_event_contains_inserted_user_messages() -> None:
+    provider = FakeProvider(
+        [
+            _msg([TextContent(text="先回答")]),
+            _msg([TextContent(text="最终回答")]),
+        ]
+    )
+    events: list[object] = []
+
+    async def emit(event) -> None:
+        events.append(event)
+
+    steering = [UserMessage(content="优先检查 session.py", timestamp=TS)]
+    turns = 0
+
+    def drain():
+        nonlocal turns
+        turns += 1
+        return steering if turns == 1 else []
+
+    result = asyncio.run(
+        run_loop(
+            provider=provider,
+            model=MODEL,
+            system_prompt=None,
+            user_prompt="开始",
+            emit=emit,
+            history=(),
+            drain_steering=drain,
+        )
+    )
+
+    queued = next(event for event in events if isinstance(event, SteeringQueued))
+    assert queued.turn == 1
+    assert [message.content for message in queued.messages] == ["优先检查 session.py"]
+    assert result == "最终回答"
+    assert provider.sent_contexts[1][-1] == "user"
+
+
 def test_max_turns_limits_loop() -> None:
     class AlwaysToolProvider:
         async def stream(self, context):
@@ -134,6 +175,33 @@ def test_model_failed_path() -> None:
     result, events = asyncio.run(_run(FailProvider()))
     assert "模型调用失败" in result
     assert "AgentEnded" in events
+
+
+def test_model_failed_event_preserves_provider_error() -> None:
+    class FailProvider:
+        async def stream(self, context):
+            yield StreamFailed(error="AuthenticationError: invalid API key")
+
+    events: list[object] = []
+
+    async def emit(event) -> None:
+        events.append(event)
+
+    result = asyncio.run(
+        run_loop(
+            provider=FailProvider(),
+            model=MODEL,
+            system_prompt=None,
+            user_prompt="hi",
+            emit=emit,
+            history=(),
+        )
+    )
+
+    ended = next(event for event in events if isinstance(event, AgentEnded))
+    assert ended.status == "model_failed"
+    assert ended.error == "AuthenticationError: invalid API key"
+    assert "AuthenticationError: invalid API key" in result
 
 
 def test_incomplete_provider_stream_returns_internal_error() -> None:

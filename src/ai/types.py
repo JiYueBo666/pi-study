@@ -83,6 +83,8 @@ class CompactionSummaryMessage:
     role: Role = "compactionSummary"
 
 
+
+
 Message = UserMessage | AssistantMessage | ToolResult | CompactionSummaryMessage
 
 

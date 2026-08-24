@@ -7,16 +7,18 @@ from datetime import UTC, datetime
 from typing import Any
 
 from agent_core.compaction import CompactionSettings, compact_messages
-from agent_core.events import AgentEvent, MessageCompleted
+from agent_core.events import AgentEvent, MessageCompleted, SteeringQueued
 from agent_core.loop import BeforeToolCallHook, run_loop
 from agent_core.types import AgentTool
 from ai.types import (
     AssistantMessage,
     CompactionSummaryMessage,
     Message,
+    ModelConfig,
     TextContent,
     ToolCallContent,
     ToolResult,
+    UserMessage,
 )
 
 Listener = Any
@@ -46,6 +48,17 @@ class Agent:
         self._compaction_settings = compaction_settings or CompactionSettings()
         self.before_tool_call_hook = before_tool_call_hook
 
+        # 插队机制，最多保留 10 条待处理消息。
+        self._steering_queue: asyncio.Queue[UserMessage] = asyncio.Queue(maxsize=10)
+
+    @property
+    def model(self) -> ModelConfig:
+        return self._model
+
+    def set_model(self, model: ModelConfig) -> None:
+        """更新后续模型调用与上下文压缩使用的模型。"""
+        self._model = model
+
     def cancel(self) -> None:
         """请求取消活动轮次（03-contracts §4：CLI Ctrl+C -> CodingSession -> Agent）。"""
 
@@ -72,6 +85,8 @@ class Agent:
 
         if isinstance(event, MessageCompleted):
             self._messages.append(event.message)
+        elif isinstance(event, SteeringQueued):
+            self._messages.extend(event.messages)
 
         for listener in self._listeners:
             result = listener(event)
@@ -105,6 +120,7 @@ class Agent:
                 cancel=self._cancel,
                 compactor=_compact_and_sync,
                 before_tool_call_hook=self.before_tool_call_hook,
+                drain_steering=self._drain_steering_message,
             )
         except asyncio.CancelledError:
             # 轮次在工具执行中被取消：历史末尾会留下"悬空"的 assistant 工具调用
@@ -163,3 +179,23 @@ class Agent:
     @property
     def messages(self) -> tuple[Message, ...]:
         return tuple(self._messages)
+
+    def steer(self, content: str) -> bool:
+        """将一条用户消息加入下一轮处理队列。"""
+        content = content.strip()
+        if not content:
+            return False
+        message = UserMessage(content=content, timestamp=datetime.now(UTC))
+        try:
+            self._steering_queue.put_nowait(message)
+        except asyncio.QueueFull:
+            return False
+        return True
+
+    def _drain_steering_message(self) -> list[UserMessage]:
+        messages: list[UserMessage] = []
+        while True:
+            try:
+                messages.append(self._steering_queue.get_nowait())
+            except asyncio.QueueEmpty:
+                return messages

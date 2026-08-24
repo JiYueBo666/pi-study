@@ -17,6 +17,7 @@ from agent_core.events import (
     MessageCompleted,
     MessageDelta,
     MessageStarted,
+    SteeringQueued,
     ThinkingDeltaEvent,
     ToolCompleted,
     ToolStarted,
@@ -51,6 +52,8 @@ BeforeToolCallHook = Callable[
     Awaitable[ToolExecutionResult | None],
 ]
 
+DrainSteering = Callable[[], Sequence[UserMessage]]
+
 
 async def run_loop(
     *,
@@ -65,6 +68,7 @@ async def run_loop(
     history: Sequence[Message] | None,
     compactor: Callable[[list[Message]], Awaitable[list[Message]]] | None = None,
     before_tool_call_hook: BeforeToolCallHook | None = None,
+    drain_steering: DrainSteering | None = None,
 ):
     # Trace开始
     await emit(AgentStarted())
@@ -94,9 +98,7 @@ async def run_loop(
                 new_messages = await compactor(messages)
 
                 # 为什么new_message[0]是compaction summary message类型？
-                if len(new_messages) != len(messages) and isinstance(
-                    new_messages[0], CompactionSummaryMessage
-                ):
+                if len(new_messages) != len(messages) and isinstance(new_messages[0], CompactionSummaryMessage):
                     await emit(
                         ContextCompacted(
                             summary=new_messages[0].summary,
@@ -119,45 +121,47 @@ async def run_loop(
             # 开启模型调用，消费异步流
             async for event in provider.stream(context):
                 if isinstance(event, StreamFailed):
-                    await emit(AgentEnded("model_failed"))
+                    await emit(AgentEnded("model_failed", error=event.error))
                     return f"模型调用失败: {event.error}"
                 elif isinstance(event, TextDelta):
                     # 转发为 L1 事件：MessageDelta 带 delta + 累积快照
                     await emit(MessageDelta(delta=event.delta, partial=event.partial))
                 elif isinstance(event, ThinkingDelta):
-                    await emit(
-                        ThinkingDeltaEvent(delta=event.delta, partial=event.partial)
-                    )
+                    await emit(ThinkingDeltaEvent(delta=event.delta, partial=event.partial))
                 elif isinstance(event, StreamCompleted):
                     assistant_message = event.message
 
             if assistant_message is None:
-                await emit(AgentEnded("internal_error"))
+                error = "模型流结束，但没有返回 StreamCompleted 消息"
+                await emit(AgentEnded("internal_error", error=error))
                 return "模型调用未返回完整消息"
 
             await emit(MessageCompleted(assistant_message))
 
             messages.append(assistant_message)
-            calls = [
-                b for b in assistant_message.content if isinstance(b, ToolCallContent)
-            ]
+
+            # 工具调用处理阶段
+            calls = [b for b in assistant_message.content if isinstance(b, ToolCallContent)]
 
             if not calls:
+                steering = drain_steering() if drain_steering is not None else ()
+
+                if steering:
+                    messages.extend(steering)
+                    await emit(SteeringQueued(turn=turn, messages=tuple(steering)))
+                    await emit(TurnEnded(turn))
+                    continue
+
                 await emit(TurnEnded(turn))
                 await emit(AgentEnded("completed"))
-                return "".join(
-                    b.text
-                    for b in assistant_message.content
-                    if isinstance(b, TextContent)
-                )
+
+                return "".join(b.text for b in assistant_message.content if isinstance(b, TextContent))
             for call in calls:
                 tool = tool_by_name.get(call.name)
 
                 # 没找到工具，返回执行结果。
                 if tool is None:
-                    exec_result = ToolExecutionResult(
-                        content=f"未知工具:{call.name}", is_error=True
-                    )
+                    exec_result = ToolExecutionResult(content=f"未知工具:{call.name}", is_error=True)
                 # 找到工具，先让业务层有机会放行或覆盖执行结果。
                 else:
                     override_result: ToolExecutionResult | None = None
@@ -186,7 +190,13 @@ async def run_loop(
                 messages.append(result_msg)
                 await emit(MessageCompleted(result_msg))
                 await emit(ToolCompleted(call, result_msg))
+
+            steering = drain_steering() if drain_steering is not None else ()
+            if steering:
+                messages.extend(steering)
+                await emit(SteeringQueued(turn=turn, messages=tuple(steering)))
             await emit(TurnEnded(turn))
+            continue
     except asyncio.CancelledError:
         # 任务级取消（CLI task.cancel）：发出终态事件后重新抛出，回到 idle
         await emit(AgentEnded("cancelled"))
