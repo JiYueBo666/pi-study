@@ -170,7 +170,7 @@ def test_status_formats_session_statistics() -> None:
                 "model": "test-model",
                 "message_count": 3,
                 "role_counts": {"user": 2, "assistant": 1},
-                "estimated_tokens": 42,
+                "context_tokens": 42,
                 "compaction_threshold": 112_000,
                 "compaction_enabled": True,
                 "pending_approvals": 0,
@@ -185,7 +185,7 @@ def test_status_formats_session_statistics() -> None:
     assert result.message is not None
     assert "会话: sess_abc" in result.message
     assert "模型: test-model" in result.message
-    assert "约 42 tokens" in result.message
+    assert "42 prompt tokens" in result.message
     assert result.data["action"] == "status"
 
 

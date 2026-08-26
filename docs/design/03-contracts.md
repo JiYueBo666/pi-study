@@ -22,7 +22,7 @@ Provider 的输入是 `ModelContext`：
 |---|---|---|
 | `UserMessage` | 调用方/会话 | 开始或继续一个用户轮次 |
 | `AssistantMessage` | 模型流聚合器 | 可包含文本和工具调用 |
-| `ToolResultMessage` | 工具执行后的 Agent | 引用来源工具调用 ID |
+| `ToolResult` | 工具执行后的 Agent | 引用来源工具调用 ID |
 | `CompactionSummaryMessage` | 上下文压缩器 | 替代被压缩的旧历史，进入后续上下文 |
 
 内容采用块（block）而非一个过载字符串。v0 只需要文本块和工具调用块。思考块、图片块、Provider 专属元数据等到真实工作流需要时再加入。
@@ -32,7 +32,7 @@ Provider 的输入是 `ModelContext`：
 ```text
 ToolDefinition：产品告诉模型可以调用什么
 ToolCall：模型请求调用某个工具一次
-ToolResultMessage：Agent 记录这次调用的结果
+ToolResult：Agent 记录这次调用的结果
 ```
 
 工具调用 ID 必不可少：单个 AssistantMessage 可能多次调用同一工具。工具结果必须通过 ID 匹配调用，不能仅按工具名称匹配。
@@ -63,12 +63,16 @@ stream_failed(error)
 
 `on_progress` 是可选进度回调：工具在长时间执行中可把人类可读的局部输出（例如 bash 的逐行 stdout）传给它，用于 UI 实时展示。它是纯展示通道，不是消息历史的一部分；实现可以忽略它，工具结果仍以 `ToolExecutionResult` 为准。
 
-工具结果具有两个通道：
+工具结果由 `ToolExecutionResult` 表达。`ToolOutput` 是一个带 `text` 和 `content_type` 的值对象；`content_type` 为展示消费者提供提示，不能改变模型消息语义。
 
 ```text
-content  -> 模型可读文本，保存为 ToolResultMessage
-details  -> 产品专属结构化信息，用于日志/UI/会话
+output           -> 默认输出；未提供覆盖时同时用于两个消费者
+context_output   -> 模型可读文本，转换为 ToolResult.content 并持久化
+display_output   -> UI 可读文本，放入 ToolCompleted.display，不写入模型历史
+details          -> 产品专属结构化信息，例如 Bash 的 command / exit_code / timed_out
 ```
+
+因此 `ToolResult.content` 始终是模型实际看见的文本，而不是界面上看到的完整输出。`ToolCompleted.result` 保持可持久的模型结果；其可选 `display` 是瞬时展示数据。没有专门输出需求的工具只填写 `output`，两个消费者得到相同内容。
 
 工具执行错误以 `is_error=True` 的结果表达，不是未捕获的 Loop 异常。模型可以据此重新发起修正后的调用。
 
@@ -129,12 +133,16 @@ agent_started / agent_ended
 turn_started / turn_ended
 message_started / message_delta / message_completed
 tool_started / tool_updated / tool_completed
-tool_approval_requested / tool_approval_completed
+context_compacted / steering_queued
 ```
 
 不变量：消费者可以渲染或记录事件，但不能用事件修改 Agent 状态。这样 CLI 行为不会反过来变成 Loop 行为。
 
 `tool_updated` 是工具执行期间的进度事件：携带局部文本（如 bash 输出的一行），只用于展示，不进入消息历史，也不替代最终的 `tool_completed`。
+
+`ToolCompleted.display` 也只用于展示：它允许界面使用完整输出和 `details` 做结构化渲染，而模型历史继续使用经过控制的 `ToolResult.content`。
+
+`ToolApprovalRequested` / `ToolApprovalCompleted` 属于 `coding_agent.CodingEvent`，不是 `AgentEvent`。它们由产品层的审批 hook 发出，CLI/TUI 订阅并回传决定。
 
 ### 会话存储契约
 
@@ -160,9 +168,9 @@ resolve(id_or_prefix) -> id       唯一前缀解析
 `agent_core.compaction` 是通用上下文压缩能力：
 
 ```text
-CompactionSettings         压缩配置（阈值、保留预算、是否启用）
-estimate_tokens(message)   粗略 token 估算
-should_compact(messages)   是否触发自动压缩
+CompactionSettings         压缩配置（输出预留、保留轮次、是否启用）
+latest_prompt_tokens()     读取最近一次 Provider 返回的真实 prompt usage
+should_compact(messages)   使用真实 usage 与 ModelConfig.context_window 判断是否自动压缩
 find_cut_index(messages)   按轮次边界找切点
 summarize(messages)        生成结构化摘要
 compact_messages(messages) 压缩总入口（自动 / 手动 force）
@@ -171,6 +179,7 @@ compact_messages(messages) 压缩总入口（自动 / 手动 force）
 不变量：
 
 - 压缩结果仍是一条消息列表，其中旧历史被 `CompactionSummaryMessage` 替代，最近轮次保留原文。
+- 自动压缩只在模型窗口和 Provider 的真实 `prompt_tokens` 都可用时触发；缺任一值时不以字符数猜测。
 - 切点只允许在 `UserMessage` 边界，禁止拆散 `AssistantMessage(tool_calls)` 与对应 `ToolResult`。
 - 摘要失败时必须安全返回原消息，绝不丢对话。
 - 手动 `/compact` 使用 `force=True`：有多个轮次时保留最后一个轮次，压缩之前全部历史。
@@ -180,7 +189,7 @@ compact_messages(messages) 压缩总入口（自动 / 手动 force）
 
 `CodingSession` 拥有工作区、Coding Prompt、具体工具和一个 Agent 实例。它把用户输入转换为 Agent prompt，并将事件转发给 CLI。
 
-上下文压缩已由 `agent_core` 提供；Coding 层负责配置阈值、暴露 `/compact` 命令并渲染压缩事件。工具审批策略由 Coding 层实现：通过 `before_tool_call_hook` 返回是否允许，并维护待审批 Future 供 UI 回传 y/n。Coding 层未来仍可为 steering、会话说明增加自定义消息。
+上下文压缩已由 `agent_core` 提供；Coding 层负责配置阈值、暴露 `/compact` 命令并渲染压缩事件。工具审批策略由 Coding 层实现：通过 `before_tool_call_hook` 返回是否允许，并维护待审批 Future 供 UI 回传 y/n。`/help`、`/clear`、`/model`、`/status`、`/compact`、`/session` 都通过 `CommandRegistry` 的 `CommandResult` 表达，CLI 与 TUI 共享业务语义；其中 `/clear` 只要求 UI 清空显示，不改 Agent 历史。
 
 ## 4. 取消
 

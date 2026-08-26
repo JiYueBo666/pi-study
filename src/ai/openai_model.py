@@ -108,7 +108,37 @@ def from_env() -> tuple[AsyncOpenAI, ModelConfig]:
     if not base_url:
         raise RuntimeError("BASE URL NOT SET")
     client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-    return client, ModelConfig(id=model_id)
+    return client, ModelConfig(
+        id=model_id,
+        context_window=_positive_int_env("OPENAI_CONTEXT_WINDOW"),
+        max_output_tokens=_positive_int_env("OPENAI_MAX_OUTPUT_TOKENS"),
+    )
+
+
+def _positive_int_env(name: str) -> int | None:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return None
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be a positive integer") from exc
+    if parsed <= 0:
+        raise RuntimeError(f"{name} must be a positive integer")
+    return parsed
+
+
+def _usage_from_sdk(usage: Any) -> dict[str, int]:
+    """将 OpenAI usage 归一化为跨 Provider 可消费的字段。"""
+
+    if usage is None:
+        return {}
+    fields = {
+        "prompt_tokens": getattr(usage, "prompt_tokens", None),
+        "completion_tokens": getattr(usage, "completion_tokens", None),
+        "total_tokens": getattr(usage, "total_tokens", None),
+    }
+    return {name: value for name, value in fields.items() if isinstance(value, int) and value >= 0}
 
 
 def _tool_definitions(context: ModelContext) -> list[dict]:
@@ -138,7 +168,11 @@ async def stream(client: AsyncOpenAI, model: ModelConfig, context: ModelContext)
             "model": model.id,
             "messages": cast(Any, messages),
             "stream": True,
+            # OpenAI 在最后一个流 chunk 返回完整的 prompt/completion usage。
+            "stream_options": {"include_usage": True},
         }
+        if model.max_output_tokens is not None:
+            kwargs["max_tokens"] = model.max_output_tokens
         if tools:
             kwargs["tools"] = tools  # 关键：把工具定义发给模型
         sdk_stream = await client.chat.completions.create(**kwargs)
@@ -154,8 +188,10 @@ async def stream(client: AsyncOpenAI, model: ModelConfig, context: ModelContext)
     )
     yield StreamStarted()
     finish_reason = None
+    usage: dict[str, int] = {}
     try:
         async for chunk in sdk_stream:
+            usage = _usage_from_sdk(getattr(chunk, "usage", None)) or usage
             for choice in chunk.choices:
                 # DeepSeek 等兼容接口在 delta 的扩展字段里流式返回 reasoning_content：
                 # 思考期可能长达数十秒，不处理则 CLI 表现为"死寂"。
@@ -194,7 +230,7 @@ async def stream(client: AsyncOpenAI, model: ModelConfig, context: ModelContext)
         return
     await _close_quietly(sdk_stream)
     yield StreamCompleted(
-        message=builder.build(stop_reason=_stop_reason(finish_reason), usage={})
+        message=builder.build(stop_reason=_stop_reason(finish_reason), usage=usage)
     )
 
 

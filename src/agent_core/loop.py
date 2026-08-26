@@ -20,12 +20,13 @@ from agent_core.events import (
     SteeringQueued,
     ThinkingDeltaEvent,
     ToolCompleted,
+    ToolDisplayResult,
     ToolStarted,
     ToolUpdated,
     TurnEnded,
     TurnStarted,
 )
-from agent_core.types import AgentTool, ToolExecutionResult
+from agent_core.types import AgentTool, ToolExecutionResult, ToolOutput
 from ai.types import (
     AssistantMessage,
     CompactionSummaryMessage,
@@ -161,7 +162,7 @@ async def run_loop(
 
                 # 没找到工具，返回执行结果。
                 if tool is None:
-                    exec_result = ToolExecutionResult(content=f"未知工具:{call.name}", is_error=True)
+                    exec_result = ToolExecutionResult(output=ToolOutput(f"未知工具:{call.name}"), is_error=True)
                 # 找到工具，先让业务层有机会放行或覆盖执行结果。
                 else:
                     override_result: ToolExecutionResult | None = None
@@ -179,17 +180,31 @@ async def run_loop(
                     else:
                         exec_result = override_result
                 # 结果转成 ToolResult 消息（ai.types 里已有，role="toolResult"）
+                context_output = exec_result.effective_context_output
+                display_output = exec_result.effective_display_output
+
                 result_msg = ToolResult(
                     toolCallId=call.id,
                     toolName=call.name,
-                    content=[TextContent(text=exec_result.content)],
+                    content=[TextContent(text=context_output.text)],
                     details=exec_result.details,
                     timestamp=datetime.now(UTC),
                     isError=exec_result.is_error,
                 )
                 messages.append(result_msg)
                 await emit(MessageCompleted(result_msg))
-                await emit(ToolCompleted(call, result_msg))
+                await emit(
+                    ToolCompleted(
+                        call=call,
+                        result=result_msg,
+                        display=ToolDisplayResult(
+                            tool_name=call.name,
+                            output=display_output,
+                            details=exec_result.details,
+                            is_error=exec_result.is_error,
+                        ),
+                    )
+                )
 
             steering = drain_steering() if drain_steering is not None else ()
             if steering:

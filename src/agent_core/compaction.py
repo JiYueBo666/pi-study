@@ -21,6 +21,7 @@ from ai.types import (
     ToolCallContent,
     ToolResult,
     UserMessage,
+    prompt_tokens,
 )
 
 SUMMARIZATION_SYSTEM_PROMPT = """You are a context summarization assistant. Your task is to read a conversation
@@ -62,47 +63,39 @@ Keep each section concise. Preserve exact file paths, function names, and error 
 class CompactionSettings:
     enabled: bool = True
     reserve_tokens: int = 16_000
-    keep_recent_tokens: int = 20_000
-    max_context_tokens: int = 128_000
+    keep_recent_turns: int = 1
 
 
 class CompactionError(Exception):
     """摘要生成失败等压缩错误。"""
 
 
-def estimate_tokens(message: Message) -> int:
-    """粗略估算一条消息的 token 数：字符数 / 4。"""
-    if isinstance(message, UserMessage):
-        return (len(message.content) + 3) // 4
+def latest_prompt_tokens(messages: Sequence[Message]) -> int | None:
+    """返回最近一次模型调用实际接收的 prompt token 数。"""
 
-    if isinstance(message, AssistantMessage):
-        chars = 0
-        for block in message.content:
-            if isinstance(block, TextContent):
-                chars += len(block.text)
-            elif isinstance(block, ThinkingContent):
-                chars += len(block.thinking)
-            elif isinstance(block, ToolCallContent):
-                chars += len(block.name) + len(str(block.arguments))
-        return (chars + 3) // 4
-
-    if isinstance(message, ToolResult):
-        chars = sum(len(block.text) for block in message.content)
-        return (chars + 3) // 4
-
-    if isinstance(message, CompactionSummaryMessage):
-        return (len(message.summary) + 3) // 4
-
-    return 0
+    for message in reversed(messages):
+        if isinstance(message, AssistantMessage):
+            tokens = prompt_tokens(message.usage)
+            if tokens is not None:
+                return tokens
+    return None
 
 
-def should_compact(messages: Sequence[Message], settings: CompactionSettings) -> bool:
-    """判断当前历史是否超过触发压缩的阈值。"""
-    total = sum(estimate_tokens(m) for m in messages)
-    return total > settings.max_context_tokens - settings.reserve_tokens
+def input_token_limit(model: ModelConfig, settings: CompactionSettings) -> int | None:
+    """由真实模型窗口和输出预留得到输入上限，未知时不自动压缩。"""
+
+    return model.input_token_limit(settings.reserve_tokens)
 
 
-def find_cut_index(messages: Sequence[Message], keep_recent_tokens: int) -> int:
+def should_compact(messages: Sequence[Message], model: ModelConfig, settings: CompactionSettings) -> bool:
+    """仅在 Provider usage 与模型窗口都已知时自动压缩。"""
+
+    usage = latest_prompt_tokens(messages)
+    limit = input_token_limit(model, settings)
+    return usage is not None and limit is not None and usage > limit
+
+
+def find_cut_index(messages: Sequence[Message], keep_recent_turns: int) -> int:
     """按轮次边界找切点。
 
     只允许在 UserMessage 开头切，避免拆散 AssistantMessage(tool_calls)
@@ -112,16 +105,9 @@ def find_cut_index(messages: Sequence[Message], keep_recent_tokens: int) -> int:
     if not user_indices:
         return 0
 
-    # 从左往右找第一个 tail token 数 <= 预算的轮次起点，
-    # 这样能保留尽量多的最近历史，又不超预算。
-    for idx in user_indices:
-        tail_tokens = sum(estimate_tokens(m) for m in messages[idx:])
-        # 给保留的结果分配的token预算
-        if tail_tokens <= keep_recent_tokens:
-            return idx
-
-    # 如果连最后一个轮次都超预算，仍然保留最后一个轮次，避免丢失最近内容。
-    return user_indices[-1]
+    if keep_recent_turns < 1 or len(user_indices) <= keep_recent_turns:
+        return 0
+    return user_indices[-keep_recent_turns]
 
 
 def serialize_messages(messages: Sequence[Message]) -> str:
@@ -195,7 +181,7 @@ async def compact_messages(
     if not settings.enabled:
         return list(messages)
 
-    if not force and not should_compact(messages, settings):
+    if not force and not should_compact(messages, model, settings):
         return list(messages)
 
     if force:
@@ -205,7 +191,7 @@ async def compact_messages(
             return list(messages)
         cut_index = user_indices[-1]
     else:
-        cut_index = find_cut_index(messages, settings.keep_recent_tokens)
+        cut_index = find_cut_index(messages, settings.keep_recent_turns)
         if cut_index == 0:
             return list(messages)
 
@@ -221,7 +207,7 @@ async def compact_messages(
     summary_msg = CompactionSummaryMessage(
         summary=summary,
         timestamp=datetime.now(UTC),
-        tokens_before=sum(estimate_tokens(m) for m in history),
+        tokens_before=latest_prompt_tokens(messages) or 0,
     )
 
     return [summary_msg, *tail]

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_core.session.jsonl import JsonlSessionStore
 from ai.types import (
     AssistantMessage,
     ModelConfig,
@@ -18,7 +19,7 @@ from coding_agent.event import ToolApprovalCompleted, ToolApprovalRequested
 from coding_agent.session import CodingSession
 from coding_agent.tools_pacakge.tool_config import ApprovalMode
 
-MODEL = ModelConfig(id="fake")
+MODEL = ModelConfig(id="fake", context_window=100_000, max_output_tokens=1_000)
 TS = datetime(2026, 1, 1)
 
 
@@ -38,9 +39,15 @@ def _tool_call(name: str = "read", **args) -> ToolCallContent:
     return ToolCallContent(id="c1", name=name, arguments=args)
 
 
-def _msg(content: list, stop_reason: str = "stop") -> AssistantMessage:
+def _msg(content: list, stop_reason: str = "stop", usage: dict | None = None) -> AssistantMessage:
     return AssistantMessage(
-        content=content, timestamp=TS, api="fake", provider="fake", model="fake", usage={}, stopReason=stop_reason
+        content=content,
+        timestamp=TS,
+        api="fake",
+        provider="fake",
+        model="fake",
+        usage=usage or {"prompt_tokens": 42},
+        stopReason=stop_reason,
     )
 
 
@@ -91,6 +98,8 @@ def test_session_switches_model_for_next_provider_call(tmp_path: Path) -> None:
     result = asyncio.run(session.prompt("hi"))
 
     assert selected.id == "new-model"
+    assert selected.context_window == 100_000
+    assert selected.max_output_tokens == 1_000
     assert session.model.id == "new-model"
     assert provider.models == ["new-model"]
     assert result == "回答"
@@ -107,8 +116,35 @@ def test_session_status_reports_context_without_mutating_history(tmp_path: Path)
     assert status["model"] == "fake"
     assert status["message_count"] == 2
     assert status["role_counts"] == {"user": 1, "assistant": 1}
-    assert status["estimated_tokens"] > 0
+    assert status["context_tokens"] == 42
+    assert status["compaction_threshold"] == 99_000
     assert session.messages == before
+
+
+def test_saved_history_can_be_restored_into_next_session_context(tmp_path: Path) -> None:
+    store = JsonlSessionStore(tmp_path / "sessions")
+    first_provider = ScriptedProvider([_msg([TextContent(text="第一轮回答")])])
+    first = CodingSession(provider=first_provider, model=MODEL, root=tmp_path, session_store=store)
+    asyncio.run(first.prompt("第一轮问题"))
+    first.save()
+
+    session_id = first.session_id
+    assert session_id is not None
+    _, history = store.load(session_id)
+
+    second_provider = ScriptedProvider([_msg([TextContent(text="恢复后回答")])])
+    second = CodingSession(
+        provider=second_provider,
+        model=MODEL,
+        root=tmp_path,
+        session_id=session_id,
+        history=history,
+        session_store=store,
+    )
+    result = asyncio.run(second.prompt("恢复后问题"))
+
+    assert result == "恢复后回答"
+    assert second_provider.sent[0] == ["user", "assistant", "user"]
 
 
 def test_session_approval_waits_and_resolves_from_business_layer(tmp_path: Path) -> None:

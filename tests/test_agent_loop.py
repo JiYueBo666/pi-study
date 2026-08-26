@@ -5,9 +5,9 @@ from datetime import datetime
 
 import pytest
 
-from agent_core.events import AgentEnded, SteeringQueued
+from agent_core.events import AgentEnded, SteeringQueued, ToolCompleted
 from agent_core.loop import _execute_tool_with_progress, run_loop
-from agent_core.types import AgentTool, ToolExecutionResult
+from agent_core.types import AgentTool, ToolExecutionResult, ToolOutput
 from ai.types import (
     AssistantMessage,
     ModelConfig,
@@ -274,6 +274,48 @@ def test_before_tool_call_hook_can_override_execution() -> None:
     assert asyncio.run(run()) == "继续"
     assert "ToolStarted" not in emit.events
     assert "ToolCompleted" in emit.events
+
+
+def test_tool_result_separates_model_context_and_display_output() -> None:
+    class LargeOutputTool(AgentTool):
+        name = "large"
+        description = ""
+
+        async def execute(self, call, cancel, on_progress=None) -> ToolExecutionResult:
+            return ToolExecutionResult(
+                output=ToolOutput("完整输出"),
+                context_output=ToolOutput("给模型的摘要"),
+                display_output=ToolOutput("给界面的完整展示", content_type="markdown"),
+            )
+
+    provider = FakeProvider(
+        [
+            _msg([_tool_call("large")], "toolUse"),
+            _msg([TextContent(text="完成")]),
+        ]
+    )
+    events: list[object] = []
+
+    async def emit(event) -> None:
+        events.append(event)
+
+    asyncio.run(
+        run_loop(
+            provider=provider,
+            model=MODEL,
+            system_prompt=None,
+            user_prompt="hi",
+            emit=emit,
+            tools=[LargeOutputTool()],
+            history=(),
+        )
+    )
+
+    completed = next(event for event in events if isinstance(event, ToolCompleted))
+    assert completed.result.content[0].text == "给模型的摘要"
+    assert completed.display is not None
+    assert completed.display.output.text == "给界面的完整展示"
+    assert completed.display.output.content_type == "markdown"
 
 
 class ProgressTool(AgentTool):

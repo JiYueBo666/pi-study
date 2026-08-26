@@ -110,12 +110,15 @@ class TerminalRenderer:
         self._print(f"▶ {self._paint(event.call.name, CYAN)}({args})")
 
     def _on_tool_completed(self, event: ToolCompleted) -> None:
-        text = _result_text(event.result)
-        if event.result.isError:
+        display = event.display
+        text = display.output.text if display is not None else _result_text(event.result)
+        is_error = display.is_error if display is not None else event.result.isError
+        details = display.details if display is not None else getattr(event.result, "details", {})
+        if is_error:
             reason = _first_line(text) or "unknown error"
             self._print(f"  {self._paint('✗', RED)} {reason[:80]}")
             return
-        summary = _result_summary(event.call.name, event.result, text)
+        summary = _result_summary_from_details(event.call.name, details, text)
         self._print(f"  {self._paint('✓', GREEN)} {summary}")
 
     def _on_ended(self, event: AgentEnded) -> None:
@@ -179,6 +182,11 @@ def _result_summary(tool_name: str, result: object, text: str) -> str:
     """工具结果一行摘要。"""
 
     details = getattr(result, "details", {})
+    return _result_summary_from_details(tool_name, details, text)
+
+
+def _result_summary_from_details(tool_name: str, details: dict, text: str) -> str:
+    """使用展示结果的结构化元数据生成一行摘要。"""
 
     if tool_name == "bash":
         code = details.get("exit_code")

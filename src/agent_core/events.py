@@ -7,7 +7,9 @@
 """
 
 from dataclasses import dataclass
+from typing import Any
 
+from agent_core.types import ToolOutput
 from ai.types import Message, ToolCallContent, ToolResult, UserMessage
 
 
@@ -78,9 +80,18 @@ class ToolUpdated:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolDisplayResult:
+    tool_name: str
+    output: ToolOutput
+    details: dict[str, Any]
+    is_error: bool
+
+
+@dataclass(frozen=True, slots=True)
 class ToolCompleted:
     call: ToolCallContent
     result: ToolResult
+    display: ToolDisplayResult | None = None
 
 
 @dataclass(frozen=True, slots=True)

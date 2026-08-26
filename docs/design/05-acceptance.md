@@ -10,9 +10,9 @@
 |---|---|---|
 | `ai` | 将录制的 OpenAI 兼容流 chunk 转为有序事件和一条完整 AssistantMessage | 用已配置 Provider 流式生成纯文本回复 |
 | `ai` 工具调用 | 正确生成工具调用并拒绝畸形参数 | 模型请求已声明工具，下一次调用接受其结果 |
-| `agent_core` | 模型/工具/消息循环、多调用、停止、上限、取消、错误结果 | 真实轮次中的事件顺序仍易读 |
-| `coding_agent` 工具 | Workspace 规则、精确编辑、命令结果语义、进程超时 | 在一次性仓库中运行 |
-| CLI | 参数/配置错误、Ctrl+C、流事件渲染 | 小项目中的交互任务 |
+| `agent_core` | 模型/工具/消息循环、多调用、停止、上限、取消、错误结果、steering、输出双通道 | 真实轮次中的事件顺序仍易读 |
+| `coding_agent` 工具 | Workspace 规则、精确编辑、命令结果语义、进程超时、Pydantic 参数校验 | 在一次性仓库中运行 |
+| CLI / TUI | 参数/配置错误、Ctrl+C、流事件渲染、审批与共享命令 | 小项目中的交互任务 |
 
 ## 产品验收场景
 
@@ -78,6 +78,17 @@
 - 已完成编辑保留在磁盘。
 - idle 时第二次 Ctrl+C 退出。
 
+### G. 工具输出与审批
+
+让 `bash` 产生超过 12,000 字符的输出，并分别批准、拒绝一次不安全工具调用。
+
+通过标准：
+
+- TUI 将命令、退出码与输出分开展示；长输出默认折叠，展开后显示完整已捕获内容；
+- `ToolResult.content` 只包含受限后的模型上下文文本，`ToolCompleted.display` 保留展示文本；
+- 拒绝时工具不执行，模型收到配置的拒绝文案，UI 从等待审批状态恢复；
+- 取消等待审批的会话不会遗留未完成 Future。
+
 ## 每阶段质量门槛
 
 - Ruff format 和 lint 通过。
@@ -94,5 +105,4 @@
 - `agent_core` 不导入 `coding_agent`；
 - Provider 响应对象不逃出 `ai.providers`；
 - `subprocess` 结果对象不逃出 Coding 工具；
-- 每个 ToolResultMessage 都引用此前的 ToolCall ID。
-
+- 每个 `ToolResult` 都引用此前的 ToolCall ID。

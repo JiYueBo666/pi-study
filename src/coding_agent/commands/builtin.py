@@ -55,10 +55,20 @@ async def _status(context: CommandContext, args: list[str]) -> CommandResult:
         f"模型: {status['model']}",
         f"工作区: {status['workspace']}",
         f"消息: {status['message_count']} ({role_text})",
-        (f"上下文: 约 {status['estimated_tokens']} tokens / {status['compaction_threshold']} 压缩阈值 ({compaction})"),
+        _context_status_line(status, compaction),
         f"审批: {status['approval_mode']}，待处理 {status['pending_approvals']}",
     ]
     return CommandResult(message="\n".join(lines), data={"action": "status", **status})
+
+
+def _context_status_line(status: dict, compaction: str) -> str:
+    tokens = status["context_tokens"]
+    threshold = status["compaction_threshold"]
+    if tokens is None:
+        return f"上下文: 等待模型返回 usage ({compaction})"
+    if threshold is None:
+        return f"上下文: {tokens} prompt tokens（未配置模型窗口，自动压缩关闭）"
+    return f"上下文: {tokens} prompt tokens / {threshold} 输入上限 ({compaction})"
 
 
 async def _session(context: CommandContext, args: list[str]) -> CommandResult:

@@ -16,6 +16,7 @@ CLI 已经可用，但终端输出受限，需要更丰富的交互（补全弹�
 - 将 `ProviderAdapter` 从 `cli.py` 抽到 `coding_agent/provider.py`，CLI 与 TUI 共用。
 - 命令系统继续使用同一个 `CommandRegistry`；`/session` 通过 `CommandResult.data` 返回结构化会话数据，TUI 据此打开弹窗。
 - 会话切换由 `TuiController` 负责：替换 `CodingSession`、重新订阅 Agent 事件、刷新历史渲染。
+- `ToolCompleted.display` 是 TUI 的工具结果输入：Bash 用结构化 `details` 分别显示命令、退出码和输出；长输出默认折叠。TUI 不从 Agent 私有状态读取这些数据。
 
 ## 后果
 

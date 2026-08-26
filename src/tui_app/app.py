@@ -508,11 +508,21 @@ class MyPiApp(TuiApp):
             status.update("已批准" if event.approved else "已拒绝")
         elif isinstance(event, ToolCompleted):
             self._finish_stream()
+            if event.display is not None:
+                log.add_tool_result(
+                    tool_name=event.display.tool_name,
+                    content=event.display.output.text,
+                    details=event.display.details,
+                    is_error=event.display.is_error,
+                )
             status.update("处理中")
         elif isinstance(event, MessageCompleted):
             self._finish_stream()
             status.update("处理中")
-            self._render_message(log, event.message)
+            # 工具结果由 ToolCompleted 携带展示输出渲染。这样模型上下文
+            # 可以是截断版，而 TUI 仍能展示完整输出。
+            if not isinstance(event.message, ToolResult):
+                self._render_message(log, event.message)
         elif isinstance(event, ContextCompacted):
             self._finish_stream()
             log.add_message(f"[上下文已压缩 · 保留 {event.retained_count} 条最近消息]", role="system")

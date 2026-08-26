@@ -9,7 +9,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from agent_core.types import ProgressSink, ToolExecutionResult
+from agent_core.types import ProgressSink, ToolExecutionResult, ToolOutput
 from ai.types import ToolCallContent
 from ai.utils.validations import ToolArgumentsValidationError, validate_arguments
 from coding_agent.tools_pacakge.tool_args import (
@@ -28,6 +28,7 @@ MAX_GREP_MATCHES = 200
 MAX_LS_ENTRIES = 500
 DEFAULT_TIMEOUT = 120  # 秒
 MAX_TIMEOUT = 600
+MAX_BASH_CONTEXT_CHARS = 12_000
 
 
 class ToolFailure(Exception):
@@ -79,22 +80,16 @@ class ToolBase:
             return await self._run(call, args, on_progress)
         except ToolArgumentsValidationError as exc:
             return ToolExecutionResult(
-                content=str(exc),
+                output=ToolOutput(str(exc)),
                 details={"validation_error": True, "tool": call.name},
                 is_error=True,
             )
         except ToolFailure as exc:
-            return ToolExecutionResult(
-                content=str(exc), details={"error": str(exc)}, is_error=True
-            )
+            return ToolExecutionResult(output=ToolOutput(str(exc)), details={"error": str(exc)}, is_error=True)
         except WorkspaceError as exc:
-            return ToolExecutionResult(
-                content=str(exc), details={"error": str(exc)}, is_error=True
-            )
+            return ToolExecutionResult(output=ToolOutput(str(exc)), details={"error": str(exc)}, is_error=True)
 
-    async def _run(
-        self, call, args: BaseModel, on_progress: ProgressSink | None = None
-    ) -> ToolExecutionResult:
+    async def _run(self, call, args: BaseModel, on_progress: ProgressSink | None = None) -> ToolExecutionResult:
         raise NotImplementedError
 
 
@@ -111,9 +106,7 @@ class ReadTool(ToolBase):
         on_progress: ProgressSink | None = None,
     ):
         content, hint = self.workspace.read(args.path)
-        return ToolExecutionResult(
-            content=content, details={"path": args.path, "truncated": bool(hint)}
-        )
+        return ToolExecutionResult(output=ToolOutput(content), details={"path": args.path, "truncated": bool(hint)})
 
 
 class WriteTool(ToolBase):
@@ -131,7 +124,7 @@ class WriteTool(ToolBase):
         self.workspace.write(args.path, args.content)
 
         return ToolExecutionResult(
-            content="File write successfully",
+            output=ToolOutput("File write successfully"),
             details={
                 "path": args.path,
                 "status": "successful",
@@ -172,7 +165,7 @@ class EditTool(ToolBase):
         )
 
         return ToolExecutionResult(
-            content=f"edited {args.path}: replaced 1 occurrence",
+            output=ToolOutput(f"edited {args.path}: replaced 1 occurrence"),
             details={"path": args.path},
         )
 
@@ -212,7 +205,7 @@ class GrepTool(ToolBase):
 
                         if len(matches) >= MAX_GREP_MATCHES:
                             return ToolExecutionResult(
-                                content="\n".join(matches),
+                                output=ToolOutput("\n".join(matches)),
                                 details={
                                     "path": args.path,
                                     "truncated": True,
@@ -221,12 +214,12 @@ class GrepTool(ToolBase):
 
         if not matches:
             return ToolExecutionResult(
-                content=f"no matches for {args.pattern!r}",
+                output=ToolOutput(f"no matches for {args.pattern!r}"),
                 details={"path": args.path},
             )
 
         return ToolExecutionResult(
-            content="\n".join(matches),
+            output=ToolOutput("\n".join(matches)),
             details={"path": args.path},
         )
 
@@ -249,30 +242,27 @@ class FindTool(ToolBase):
             dirs[:] = [
                 directory
                 for directory in dirs
-                if not directory.startswith(".")
-                and directory not in {"node_modules", "__pycache__"}
+                if not directory.startswith(".") and directory not in {"node_modules", "__pycache__"}
             ]
 
             for filename in files:
                 if args.pattern in filename:
-                    found.append(
-                        str(Path(base).relative_to(self.workspace.root) / filename)
-                    )
+                    found.append(str(Path(base).relative_to(self.workspace.root) / filename))
 
                     if len(found) >= MAX_LS_ENTRIES:
                         return ToolExecutionResult(
-                            content="\n".join(found),
+                            output=ToolOutput("\n".join(found)),
                             details={"truncated": True},
                         )
 
         if not found:
             return ToolExecutionResult(
-                content=f"no files match {args.pattern!r}",
+                output=ToolOutput(f"no files match {args.pattern!r}"),
                 details={},
             )
 
         return ToolExecutionResult(
-            content="\n".join(found),
+            output=ToolOutput("\n".join(found)),
             details={},
         )
 
@@ -301,7 +291,7 @@ class ListTool(ToolBase):
 
         if len(entries) > MAX_LS_ENTRIES:
             return ToolExecutionResult(
-                content="\n".join(entries[:MAX_LS_ENTRIES]),
+                output=ToolOutput("\n".join(entries[:MAX_LS_ENTRIES])),
                 details={
                     "path": args.path,
                     "truncated": True,
@@ -309,7 +299,7 @@ class ListTool(ToolBase):
             )
 
         return ToolExecutionResult(
-            content="\n".join(entries) if entries else "(empty directory)",
+            output=ToolOutput("\n".join(entries) if entries else "(empty directory)"),
             details={"path": args.path},
         )
 
@@ -354,14 +344,16 @@ class BashTool(ToolBase):
         except TimeoutError:
             await _kill_process_group(proc)
             await proc.wait()
+            display_text = _join_bash_output(stdout_lines, stderr_lines)
             return ToolExecutionResult(
-                content="[command timed out]",
+                output=ToolOutput(display_text or "[command timed out]"),
                 details={
                     "command": args.command,
                     "exit_code": proc.returncode,
                     "timed_out": True,
                 },
                 is_error=False,  # 超时不是"错误"，模型可继续（04-boundaries 失败分类）
+                context_output=ToolOutput(_limit_context_output(display_text or "[command timed out]")),
             )
         except asyncio.CancelledError:
             await _kill_process_group(proc)
@@ -369,14 +361,32 @@ class BashTool(ToolBase):
             raise
 
         await proc.wait()
-        text = "".join(stdout_lines)
-        if stderr_lines:
-            text += "\nstderr: " + "".join(stderr_lines)
+        text = _join_bash_output(stdout_lines, stderr_lines)
         return ToolExecutionResult(
-            content=text,
+            output=ToolOutput(text),
             details={"command": args.command, "exit_code": proc.returncode},
             is_error=proc.returncode != 0,
+            context_output=ToolOutput(_limit_context_output(text)),
         )
+
+
+def _join_bash_output(stdout_lines: list[str], stderr_lines: list[str]) -> str:
+    text = "".join(stdout_lines)
+    if stderr_lines:
+        text += "\nstderr: " + "".join(stderr_lines)
+    return text
+
+
+def _limit_context_output(text: str) -> str:
+    """限制模型上下文中的 bash 输出，保留首尾信息便于诊断。"""
+
+    if len(text) <= MAX_BASH_CONTEXT_CHARS:
+        return text
+    marker = "\n... [bash output truncated for model context] ...\n"
+    budget = MAX_BASH_CONTEXT_CHARS - len(marker)
+    head = budget * 2 // 3
+    tail = budget - head
+    return text[:head] + marker + text[-tail:]
 
 
 async def _kill_process_group(proc: asyncio.subprocess.Process) -> None:

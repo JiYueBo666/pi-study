@@ -63,6 +63,9 @@ class Agent:
         """请求取消活动轮次（03-contracts §4：CLI Ctrl+C -> CodingSession -> Agent）。"""
 
         self._cancel.set()
+        # Steering 只属于当前活动任务。任务被取消后，未消费的插话不能
+        # 泄漏到下一次 run，否则下一次任务会收到旧任务的上下文。
+        self._clear_steering_messages()
 
     def subscribe(self, listener):
         """
@@ -199,3 +202,10 @@ class Agent:
                 messages.append(self._steering_queue.get_nowait())
             except asyncio.QueueEmpty:
                 return messages
+
+    def _clear_steering_messages(self) -> None:
+        while True:
+            try:
+                self._steering_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return

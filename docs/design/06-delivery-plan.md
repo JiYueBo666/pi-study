@@ -33,7 +33,7 @@
 
 - 加入工具定义和工具调用内容块；
 - 解析流式工具调用参数；
-- 将 ToolResultMessage 序列化回 Provider 格式。
+- 将 `ToolResult` 序列化回 Provider 格式。
 
 退出条件：真实模型可以请求已声明工具，并接收匹配结果。
 
@@ -78,16 +78,20 @@
 |---|---|
 | 需要持久工作 | 会话持久化与恢复（已实现，P1） |
 | 长对话退化 | 上下文选择与压缩（已实现，P2） |
-| 用户需要中途指令 | steering/follow-up 队列 |
-| 终端输出受限 | 独立 TUI 包（进行中，`mypi`） |
+| 用户需要中途指令 | steering/follow-up 队列（已实现） |
+| 终端输出受限 | 独立 TUI 包与结构化工具输出（已实现，`mypi`） |
+| 工具可能修改文件或执行命令 | 可替换的审批 hook（已实现） |
 | 重复定制工作流 | 扩展或 prompt template |
 
 当前已选择并实现：
 
 - **会话持久化与恢复**（P1）：JSONL + `agent_core/session`，含 `--resume / --list-sessions / --forget`
 - **上下文选择与压缩**（P2）：`agent_core/compaction`，自动压缩 + `/compact` 手动压缩
+- **工具审批**：业务层 `before_tool_call_hook` + `CodingEvent` + CLI/TUI y/n 回传
+- **Steering**：`agent_core` 有界队列；每轮边界注入并通过 `SteeringQueued` 通知 UI
+- **TUI 与结构化工具输出**：Textual 界面；Bash 的命令、退出码、输出独立展示，长输出可折叠
 
-下一步候选从剩余观察中根据真实使用选择。
+下一步候选从剩余观察中根据真实使用选择：评测基准、输出内存上限 / 外部化、MCP 或子 Agent。
 
 Pi 有的功能不会仅因 Pi 已实现而自动纳入。
 
@@ -103,5 +107,4 @@ Pi 有的功能不会仅因 Pi 已实现而自动纳入。
 考虑过的替代方案
 ```
 
-当前已有 ADR 0001（会话持久化）、ADR 0002（上下文压缩）、ADR 0003（TUI 架构）和 ADR 0004（工具审批）；本设计文档是当前基线，后续长期取舍继续以 ADR 记录。
-
+当前已有 ADR 0001（会话持久化）、ADR 0002（上下文压缩）、ADR 0003（TUI 架构）、ADR 0004（工具审批）和 ADR 0005（工具输出通道）；本设计文档是当前基线，后续长期取舍继续以 ADR 记录。

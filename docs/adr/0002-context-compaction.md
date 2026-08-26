@@ -10,7 +10,8 @@
 
 - 上下文压缩作为通用能力放在 `agent_core/compaction.py`，不放在 Coding 产品层。
 - 新增 `CompactionSummaryMessage` 到 `ai.types`，作为被压缩旧历史的替代消息；发送给模型时转换为 `user` 消息。
-- 采用粗略 token 估算（字符数 / 4）和轮次边界切点，不引入完整 Pi 风格 token 精确定位。
+- 自动触发使用模型配置的真实上下文窗口和 Provider 返回的 `prompt_tokens`；缺少任一值时不自动压缩，不再用字符数 / 4 猜测。
+- 切点按轮次边界保留最近轮次，不以估算 token 决定切点。
 - 自动压缩时机：每次模型调用前，由 `run_loop` 的 `compactor` 回调触发。
 - 手动压缩：`/compact` 命令调用同一 `compact_messages`，`force=True` 时只要有多个轮次就保留最后一个轮次、压缩之前全部历史。
 - 压缩失败必须安全返回原消息，绝不丢对话。
@@ -18,7 +19,7 @@
 
 ## 后果
 
-- 长对话可以继续运行，但摘要会丢失部分细节；需要真实使用验证 `keep_recent_tokens` 和摘要 prompt。
+- 长对话可以继续运行，但摘要会丢失部分细节；需要真实使用验证 `keep_recent_turns` 和摘要 prompt。
 - `ai.types.Message` 联合类型增加一种消息，`openai_model` 和 `JsonlSessionStore` 都必须支持。
 - `run_loop` 增加 `compactor` 回调，`Agent` 负责同步压缩后的消息状态。
 - 后续可升级为增量摘要、token 精确切点、摘要缓存。

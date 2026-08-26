@@ -6,7 +6,7 @@ from typing import cast
 
 from agent_core.agent import Agent
 from agent_core.events import AgentEnded, MessageCompleted
-from agent_core.types import AgentTool, ToolExecutionResult
+from agent_core.types import AgentTool, ToolExecutionResult, ToolOutput
 from ai.types import (
     AssistantMessage,
     ModelConfig,
@@ -41,7 +41,7 @@ class ReadTool(AgentTool):
     parameters = {}
 
     async def execute(self, call, cancel, on_progress=None) -> ToolExecutionResult:
-        return ToolExecutionResult(content="文件内容")
+        return ToolExecutionResult(output=ToolOutput("文件内容"))
 
 
 def test_messages_driven_by_events() -> None:
@@ -171,3 +171,23 @@ def test_steering_messages_are_added_to_agent_history() -> None:
 
     asyncio.run(agent.run("开始"))
     assert any(getattr(message, "content", None) == "下一轮检查 session.py" for message in agent.messages)
+
+
+def test_steering_rejects_empty_messages_and_enforces_capacity() -> None:
+    agent = Agent(provider=FakeProvider([]), model=MODEL)
+
+    assert agent.steer("   ") is False
+    assert all(agent.steer(f"message {index}") for index in range(10))
+    assert agent.steer("overflow") is False
+    assert [message.content for message in agent._drain_steering_message()] == [
+        f"message {index}" for index in range(10)
+    ]
+
+
+def test_cancel_discards_unconsumed_steering_messages() -> None:
+    agent = Agent(provider=FakeProvider([]), model=MODEL)
+    assert agent.steer("只属于旧任务")
+
+    agent.cancel()
+
+    assert agent._drain_steering_message() == []

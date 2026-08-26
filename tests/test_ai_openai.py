@@ -23,9 +23,14 @@ MODEL = ModelConfig(id="gpt-test")
 TS = datetime(2026, 1, 1)
 
 
-def _chunk(text: str | None = None, tool_calls: list | None = None, finish_reason: str | None = None):
+def _chunk(
+    text: str | None = None,
+    tool_calls: list | None = None,
+    finish_reason: str | None = None,
+    usage=None,
+):
     return SimpleNamespace(
-        usage=None,
+        usage=usage,
         choices=[
             SimpleNamespace(
                 delta=SimpleNamespace(content=text, tool_calls=tool_calls or []), finish_reason=finish_reason
@@ -42,9 +47,11 @@ class FakeCompletions:
     def __init__(self, chunks: list) -> None:
         self.chunks = chunks
         self.calls = 0
+        self.last_kwargs = None
 
     async def create(self, **kwargs):
         self.calls += 1
+        self.last_kwargs = kwargs
 
         async def gen():
             for c in self.chunks:
@@ -63,7 +70,8 @@ def _ctx(text: str = "hi") -> ModelContext:
 
 
 async def _collect(client, context=None) -> list:
-    return [e async for e in stream(client, MODEL, context or _ctx())]
+    model_context = context or _ctx()
+    return [e async for e in stream(client, model_context.model, model_context)]
 
 
 def test_text_stream_event_sequence() -> None:
@@ -82,6 +90,35 @@ def test_text_stream_event_sequence() -> None:
     assert isinstance(comp, StreamCompleted)
     assert comp.message.content == [TextContent(text="你好")]
     assert comp.message.stopReason == "stop"
+
+
+def test_stream_preserves_final_usage() -> None:
+    client = FakeClient(
+        [
+            _chunk(text="ok"),
+            _chunk(
+                finish_reason="stop",
+                usage=SimpleNamespace(prompt_tokens=123, completion_tokens=7, total_tokens=130),
+            ),
+        ]
+    )
+
+    events = asyncio.run(_collect(client))
+
+    comp = events[-1]
+    assert isinstance(comp, StreamCompleted)
+    assert comp.message.usage == {"prompt_tokens": 123, "completion_tokens": 7, "total_tokens": 130}
+    assert client.chat.completions.calls == 1
+    assert client.chat.completions.last_kwargs["stream_options"] == {"include_usage": True}
+
+
+def test_stream_sends_configured_max_output_tokens() -> None:
+    model = ModelConfig(id="gpt-test", context_window=128_000, max_output_tokens=4_000)
+    client = FakeClient([_chunk(text="ok", finish_reason="stop")])
+
+    asyncio.run(_collect(client, ModelContext(model=model, messages=[UserMessage(content="hi", timestamp=TS)])))
+
+    assert client.chat.completions.last_kwargs["max_tokens"] == 4_000
 
 
 def test_text_delta_carries_partial() -> None:

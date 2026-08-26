@@ -8,10 +8,10 @@ from pathlib import Path
 from uuid import uuid4
 
 from agent_core.agent import Agent
-from agent_core.compaction import CompactionSettings, estimate_tokens
+from agent_core.compaction import CompactionSettings, input_token_limit, latest_prompt_tokens
 from agent_core.session.jsonl import JsonlSessionStore
 from agent_core.session.types import SessionMeta, SessionStore
-from agent_core.types import AgentTool, ToolExecutionResult
+from agent_core.types import AgentTool, ToolExecutionResult, ToolOutput
 from ai.types import ModelConfig, ToolCallContent
 from coding_agent.event import (
     CodingEvent,
@@ -138,6 +138,8 @@ class CodingSession:
             id=model_id,
             provider=current.provider,
             api=current.api,
+            context_window=current.context_window,
+            max_output_tokens=current.max_output_tokens,
         )
         self.agent.set_model(model)
         return model
@@ -149,15 +151,15 @@ class CodingSession:
         for message in messages:
             role_counts[message.role] = role_counts.get(message.role, 0) + 1
 
-        estimated_tokens = sum(estimate_tokens(message) for message in messages)
-        threshold = self.compaction_settings.max_context_tokens - self.compaction_settings.reserve_tokens
+        context_tokens = latest_prompt_tokens(messages)
+        threshold = input_token_limit(self.model, self.compaction_settings)
         return {
             "session_id": self.session_id,
             "workspace": str(self.workspace.root),
             "model": self.model.id,
             "message_count": len(messages),
             "role_counts": role_counts,
-            "estimated_tokens": estimated_tokens,
+            "context_tokens": context_tokens,
             "compaction_threshold": threshold,
             "compaction_enabled": self.compaction_settings.enabled,
             "pending_approvals": len(self._pending_approvals),
@@ -197,7 +199,7 @@ class CodingSession:
         if approved:
             return None
         return ToolExecutionResult(
-            content=intent,
+            output=ToolOutput(intent),
             details={"approval_required": True, "approved": False},
             is_error=True,
         )

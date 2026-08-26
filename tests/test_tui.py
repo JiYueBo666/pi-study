@@ -144,23 +144,12 @@ def test_approval_prompt_renders_untrusted_command_as_plain_text() -> None:
         async with app.run_test(size=(80, 24)) as pilot:
             app._show_approval_prompt(request)
             await pilot.pause()
-            approval = next(
-                child
-                for child in app.query_one(MessageList).children
-                if child.has_class("approval")
-            )
+            approval = next(child for child in app.query_one(MessageList).children if child.has_class("approval"))
             assert isinstance(approval, Static)
             content = str(approval.content)
             assert "工具调用需要审批" in content
             assert str(request.call.arguments) in content
             assert "允许执行？输入 y / n" in content
-            '''
-                "⚠️  工具调用需要审批\n\n"
-                "工具：bash\n"
-                "说明：执行 shell 命令\n"
-                "参数：{'command': 'python -c \'print(\"[x]\\n\")\'}\n\n"
-                "允许执行？输入 y / n"
-            '''
 
     asyncio.run(run())
 

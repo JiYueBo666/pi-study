@@ -2,7 +2,7 @@
 
 ## 目标
 
-在保留现有 CLI 的前提下，为 pi-study 提供独立的 Textual TUI 界面。TUI 与 CLI 共享同一套 `CodingSession / CommandRegistry / AgentEvent`，但 UI 实现完全分离。
+在保留现有 CLI 的前提下，为 pi-study 提供独立的 Textual TUI 界面。TUI 与 CLI 共享同一套 `CodingSession / CommandRegistry`，并消费 `AgentEvent` 与 `CodingEvent`，但 UI 实现完全分离。
 
 ## 分层
 
@@ -37,6 +37,7 @@ coding_agent 不导入 tui；CLI 完全不变
   - Esc 关闭
 - 载入会话后显示完整历史对话
 - 思考流（`ThinkingDeltaEvent`）与工具进度（`ToolUpdated`）实时显示在状态行
+- 工具结果结构化渲染：Bash 的命令、退出码、输出分区显示；输出使用 Rich `Syntax` 高亮，超过 20 行或 2,000 字符时默认折叠
 - 工具审批：不安全工具调用时弹出高亮审批框，输入 `y` / `n` 决定是否执行
 - `/help` 显示命令，`/clear` 只清空当前消息区
 - `/model [model_id]` 查看或切换模型，`/status` 显示会话与上下文统计
@@ -59,4 +60,5 @@ coding_agent 不导入 tui；CLI 完全不变
 - [x] 思考流与工具进度状态行
 - [x] 工具审批 y/n 对接
 - [x] 会话恢复后的模型切换与 `/help`、`/clear`、`/status`
-- [ ] 富渲染（工具输出、代码块、图片）
+- [x] 工具输出富渲染（Bash / 文件结果、语法高亮、长输出折叠）
+- [ ] 通用 Markdown 代码块与图片渲染
