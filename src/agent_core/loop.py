@@ -1,8 +1,4 @@
-"""agent_core.loop — Agent 主循环。
-
-占位实现：按 docs/design/06-delivery-plan.md，真正的模型 -> 工具 -> 模型
-循环在 Phase 3 实现。当前仅提供 CLI 可导入的最小 run_agent。
-"""
+"""agent_core.loop — 由模型工具调用驱动的 Agent 主循环。"""
 
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
@@ -64,7 +60,7 @@ async def run_loop(
     user_prompt: str,
     emit: EventSink,
     tools: Sequence[AgentTool] = (),
-    max_turns: int = 20,
+    max_turns: int | None = None,
     cancel: asyncio.Event | None = None,
     history: Sequence[Message] | None,
     compactor: Callable[[list[Message]], Awaitable[list[Message]]] | None = None,
@@ -83,7 +79,14 @@ async def run_loop(
 
     # 进入turn开启对话
     try:
-        for turn in range(1, max_turns + 1):
+        turn = 0
+        while True:
+            turn += 1
+            # 轮数只作为可选的安全熔断，不是正常完成条件。正常情况下
+            # 由模型是否继续返回工具调用决定是否进入下一轮。
+            if max_turns is not None and turn > max_turns:
+                await emit(AgentEnded("max_turns"))
+                return f"达到max turn轮数: {max_turns} 轮"
             # 协作式取消：外部设置了 cancel 信号（CLI Ctrl+C）
             if cancel is not None and cancel.is_set():
                 await emit(AgentEnded("cancelled"))
@@ -216,8 +219,6 @@ async def run_loop(
         # 任务级取消（CLI task.cancel）：发出终态事件后重新抛出，回到 idle
         await emit(AgentEnded("cancelled"))
         raise
-    await emit(AgentEnded("max_turns"))
-    return f"达到max turn轮数: {max_turns} 轮"
 
 
 async def _execute_tool_with_progress(

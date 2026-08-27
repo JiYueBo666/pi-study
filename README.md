@@ -22,7 +22,7 @@ coding_agent  知道如何做 Coding 产品（工作区、工具、提示词、C
 v0 核心 + Phase 6 已落地能力（对应 `docs/design/06-delivery-plan.md`）：
 
 - 流式模型调用：文本增量 + `partial` 累积快照 + 工具调用解析 + `reasoning_content` 思考流
-- Agent Loop：模型 → 工具 → 模型多轮循环、max_turns、多轮对话历史
+- Agent Loop：模型 → 工具 → 模型多轮循环；模型不再请求工具时结束，可选 `--max-turns` 作为安全熔断
 - 事件系统：`AgentEvent` 生命周期（Agent/Turn/Message/Tool 四层嵌套）、`subscribe` 观察、同步屏障
 - Coding 工具：`read` `write` `edit` `grep` `find` `ls` `bash`（工作区路径边界、命令超时/进程组终止）
 - 工具输出双通道：完整展示结果与受限模型上下文结果可分离；`bash` 向模型最多提供 12,000 字符，TUI 仍可展示完整已捕获输出
@@ -60,7 +60,8 @@ pi-study "用一句话说这个项目是什么"
 
 ```bash
 pi-study                          # 工作区 = 当前目录
-pi-study --workspace /path/to/repo --max-turns 20
+pi-study --workspace /path/to/repo
+# 可选安全熔断：pi-study --workspace /path/to/repo --max-turns 40
 ```
 
 交互说明：运行中第一次 Ctrl+C 取消当前任务并回到提示符；idle 时再按一次退出；输入 `/quit`（或 `/exit`、`/q`）退出。

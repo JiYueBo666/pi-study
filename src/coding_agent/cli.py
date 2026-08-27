@@ -60,8 +60,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-turns",
         type=int,
-        default=20,
-        help="每个用户输入的 Agent 轮数上限（默认 20）",
+        default=None,
+        help="可选的 Agent 轮数安全上限；默认由工具调用驱动，不设轮数上限",
     )
     parser.add_argument("--no-color", action="store_true", help="禁用 ANSI 颜色")
     parser.add_argument("--resume", metavar="SESSION_ID", help="恢复指定会话（支持唯一前缀）")
@@ -70,14 +70,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _banner(session: CodingSession, model_id: str, max_turns: int) -> None:
+def _banner(session: CodingSession, model_id: str, max_turns: int | None) -> None:
     """一次性欢迎横幅。"""
 
     line = "─" * 62
     session_label = session.session_id or "新会话"
     print(f"{DIM}{line}{RESET}")
     print(f" pi-study · 工作区 {session.workspace.root}")
-    print(f" 会话 {session_label} · 模型 {model_id} · 轮数上限 {max_turns}")
+    limit = str(max_turns) if max_turns is not None else "工具调用驱动"
+    print(f" 会话 {session_label} · 模型 {model_id} · 循环 {limit}")
     print(" 输入任务；Ctrl+C 取消当前任务，idle 时再按一次退出")
     print(f"{DIM}{line}{RESET}")
 

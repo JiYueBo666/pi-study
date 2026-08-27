@@ -157,7 +157,7 @@ class JsonlSessionStore:
             cwd=d["cwd"],
             created_at=datetime.fromisoformat(d["created_at"]),
             updated_at=datetime.fromisoformat(d["updated_at"]),
-            max_turns=d["max_turns"],
+            max_turns=d.get("max_turns"),
             message_count=d["message_count"],
             version=d.get("version", 1),
         )

@@ -32,7 +32,7 @@ class Agent:
         model,
         system_prompt: str | None = None,
         tools: Sequence[AgentTool] = (),
-        max_turns: int = 20,
+        max_turns: int | None = None,
         history: Sequence[Message] = (),
         compaction_settings: CompactionSettings | None = None,
         before_tool_call_hook: BeforeToolCallHook | None = None,

@@ -39,7 +39,8 @@ class SessionMeta:
     cwd: str
     created_at: datetime
     updated_at: datetime
-    max_turns: int = 30
+    # 兼容旧会话元数据；None 表示由工具调用驱动且不设轮数上限。
+    max_turns: int | None = None
     message_count: int = 0
     version: int = 1
 

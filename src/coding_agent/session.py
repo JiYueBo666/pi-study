@@ -39,7 +39,7 @@ class CodingSession:
         provider,
         model,
         root: str | Path = ".",
-        max_turns=30,
+        max_turns: int | None = None,
         session_id: str | None = None,
         history=(),
         session_store: SessionStore | None = None,

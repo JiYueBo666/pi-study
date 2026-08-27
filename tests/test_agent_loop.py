@@ -156,7 +156,7 @@ def test_steering_event_contains_inserted_user_messages() -> None:
     assert provider.sent_contexts[1][-1] == "user"
 
 
-def test_max_turns_limits_loop() -> None:
+def test_optional_max_turns_limits_loop() -> None:
     class AlwaysToolProvider:
         async def stream(self, context):
             yield StreamCompleted(message=_msg([_tool_call()], "toolUse"))
@@ -165,6 +165,26 @@ def test_max_turns_limits_loop() -> None:
     assert result == "达到max turn轮数: 2 轮"
     assert events.count("TurnStarted") == 2
     assert "AgentEnded" in events
+
+
+def test_tool_calls_drive_loop_without_default_turn_limit() -> None:
+    class ThreeToolCallsProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def stream(self, context):
+            self.calls += 1
+            if self.calls <= 3:
+                yield StreamCompleted(message=_msg([_tool_call()], "toolUse"))
+            else:
+                yield StreamCompleted(message=_msg([TextContent(text="完成")]))
+
+    provider = ThreeToolCallsProvider()
+    result, events = asyncio.run(_run(provider, tools=[ReadTool()]))
+
+    assert result == "完成"
+    assert provider.calls == 4
+    assert events.count("TurnStarted") == 4
 
 
 def test_model_failed_path() -> None:
